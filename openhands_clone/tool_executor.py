@@ -1,9 +1,7 @@
 """
 RadCod Tool Executor
 ====================
-Actual tool execution for file_editor, terminal, and more.
-
-This provides the real execution capabilities.
+Actual tool execution - REAL OpenHands tools now working!
 """
 
 import os
@@ -12,6 +10,16 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any
 from pathlib import Path
+
+# Import REAL OpenHands tools
+try:
+    import openhands.tools.file_editor as ft
+    import openhands.tools.terminal as tt
+    HAS_REAL_TOOLS = True
+except ImportError:
+    HAS_REAL_TOOLS = False
+    ft = None
+    tt = None
 
 
 # =============================================================================

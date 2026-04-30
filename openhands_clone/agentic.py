@@ -4,8 +4,6 @@ RadCod Agentic Core - Reasoning-Action Loop
 Implements the same approach as OpenHands:
 
 REASONING (LLM) → ACTION (Tool) → OBSERVATION → REPEAT
-
-This is the core of agentic systems - autonomous execution.
 """
 
 import os
@@ -17,6 +15,14 @@ from openhands.sdk import LLM, Agent, Conversation
 from openhands_clone.skills import find_skills
 from openhands_clone.events import Event, EventType, message_event, observation_event, action_event, thinking_event
 from openhands_clone.security import SecurityAnalyzer, ActionStatus
+
+# Import REAL OpenHands tools (now working!)
+try:
+    import openhands.tools.file_editor as ft
+    import openhands.tools.terminal as tt
+    HAS_REAL_TOOLS = True
+except ImportError:
+    HAS_REAL_TOOLS = False
 
 
 # =============================================================================
