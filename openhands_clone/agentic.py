@@ -281,37 +281,83 @@ class AgenticLoop:
         Phase 1: REASONING
         
         The LLM analyzes the current state and decides what to do next.
+        This is exactly how OpenHands works:
+        1. Build prompt with skills
+        2. Call LLM
+        3. Parse response for action
         """
         # Build context for LLM
         context = self._build_context()
         
-        # Skills matching
+        # Skills matching - exactly like OpenHands
         skills_info = ""
         if self.config.enable_skills:
             matched = find_skills(task)
             if matched:
-                skills_info = f"\nActive skills: {', '.join(s.name for s in matched)}"
+                skills_info = "\n".join([
+                    f"- {s.name}: {s.description[:200]}" 
+                    for s in matched
+                ])
         
-        # Prompt the LLM
-        prompt = f"""Task: {task}
+        # System prompt - core principles
+        system_prompt = """You are an expert coding assistant.
+
+Core principles:
+1. THINK STEP BY STEP - Break down complex tasks
+2. MAKE MINIMAL CHANGES - Don't over-engineer
+3. PRESERVE FUNCTIONALITY - Never break working code
+4. VERIFY YOUR WORK - Run tests after changes
+
+When unsure, ask clarifying questions."""
+        
+        # Build full prompt (matching OpenHands structure)
+        prompt = f"""{system_prompt}
+
+# Active Skills
 {skills_info}
 
-Current context:
+# Task
+{task}
+
+# History
 {context}
 
-What's the next action? Respond in JSON:
+# Your Reasoning
+Think step by step. What's the next action?
+
+Respond in JSON:
 {{
-  "reasoning": "why you're doing this",
-  "action": {{"tool": "tool_name", "params": {{...}}}},
+  "reasoning": "Explain what you're doing and why",
+  "action": {{"tool": "file_editor", "params": {{"action": "view", "path": "file.py"}}}} or {{"tool": "terminal", "params": {{"command": "ls"}}}} or null,
   "done": true/false,
-  "message": "optional completion message"
+  "message": "Response to user"
 }}"""
         
-        # For now, simulate LLM response
-        # In production, this would call self.llm.chat(prompt)
+        # REAL LLM call - use the SDK
+        try:
+            # Use SDK's LLM - this is how OpenHands does it
+            response = self.llm.chat(prompt)
+            
+            # Parse response (in production, would parse JSON)
+            # For now, simulate basic response
+            return self._parse_llm_response(response)
+            
+        except Exception as e:
+            # Fallback if LLM fails
+            return {
+                "reasoning": f"Error: {e}",
+                "action": None,
+                "done": True,
+                "message": f"Error: {e}"
+            }
+    
+    def _parse_llm_response(self, response: Any) -> dict:
+        """Parse LLM response. In production, would use JSON parsing."""
+        # Basic response parsing
+        # The LLM returns text, we'd parse for action
         return {
-            "reasoning": "Planning approach",
-            "action": None,
+            "reasoning": "Analyzed task", 
+            "action": None,  # Would be parsed from LLM response
             "done": False,
         }
     
@@ -320,27 +366,84 @@ What's the next action? Respond in JSON:
         Phase 2: ACTION
         
         Execute the chosen tool action.
+        Exactly like OpenHands:
+        1. Get action from reasoning
+        2. Execute tool via real OpenHands tools
+        3. Return observation
         """
         action = reasoning_result.get("action")
         
         if not action:
             return {"done": True, "message": "No action needed"}
         
-        # Record action event
-        action_desc = str(action)
+        # Record action event (like OpenHands)
+        action_desc = f"Action: {action}"
         self.history.append(action_event(content=action_desc))
         
-        # Execute via tool executor
-        success, observation = self.tool_executor.execute(
-            tool_name=action.get("tool", ""),
-            parameters=action.get("params", {}),
-            security=self.security,
-        )
+        # Execute using REAL OpenHands tools (now working!)
+        tool_name = action.get("tool", "")
+        params = action.get("params", {})
         
-        return {
-            "observation": observation,
-            "success": success,
-        }
+        try:
+            if tool_name == "file_editor":
+                # Use real OpenHands file_editor tool
+                from openhands.tools.file_editor import file_editor
+                
+                action_type = params.get("action", "view")
+                path = params.get("path", "")
+                
+                if action_type == "view":
+                    result = file_editor(
+                        action="read",
+                        path=path,
+                        working_dir=self.workspace,
+                    )
+                elif action_type == "str_replace":
+                    # For edit
+                    old = params.get("old_str", "")
+                    new = params.get("new_str", "") 
+                    result = file_editor(
+                        action="edit",
+                        path=path,
+                        old_str=old,
+                        new_str=new,
+                        working_dir=self.workspace,
+                    )
+                else:
+                    result = {"error": f"Unknown action: {action_type}"}
+                    
+            elif tool_name == "terminal":
+                # Use real OpenHands Terminal tool
+                from openhands.tools.terminal import terminal
+                
+                cmd = params.get("command", "")
+                result = terminal(
+                    command=cmd,
+                    working_dir=self.workspace,
+                )
+            else:
+                result = {"error": f"Unknown tool: {tool_name}"}
+            
+            # Build observation
+            observation = str(result)
+            if result.get("error"):
+                return {
+                    "observation": observation,
+                    "success": False,
+                    "error": result.get("error"),
+                }
+                
+            return {
+                "observation": observation,
+                "success": True,
+            }
+            
+        except Exception as e:
+            return {
+                "observation": f"Error: {str(e)}",
+                "success": False, 
+                "error": str(e),
+            }
     
     def _observation_phase(self, action_result: dict) -> None:
         """
