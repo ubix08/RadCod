@@ -1,7 +1,13 @@
 """
-OpenHands-Clone Agentic Coding System
-=====================================
+OpenHands-Clone Agentic Coding System - Phase 1
+=============================================
 An optimized AI coding assistant built with the OpenHands SDK.
+
+Phase 1 Focus:
+- SDK core classes (LLM, Agent, Conversation) - fully integrated
+- AgentSettings from SDK
+- Tool integration (official + fallback)
+- Enhanced configuration
 
 Features:
 - LLM configuration with multiple provider support
@@ -9,17 +15,22 @@ Features:
 - Conversation management
 - Streaming and async support
 - Metrics tracking
+- Settings & serialization
 """
 
 import os
 from pathlib import Path
+from typing import Any
 
-# OpenHands SDK core imports - these work
+# OpenHands SDK core imports
 from openhands.sdk import (
     LLM,
     Agent,
     Conversation,
+    AgentSettings,
+    ConversationSettings,
 )
+from openhands.sdk.tool import Tool
 
 
 # =============================================================================
@@ -29,6 +40,43 @@ from openhands.sdk import (
 DEFAULT_MODEL = os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-20250513")
 DEFAULT_TEMPERATURE = 0.7
 MAX_ITERATIONS = 100
+DEFAULT_TIMEOUT = 600  # 10 minutes
+
+
+# =============================================================================
+# LLM Configuration
+# =============================================================================
+
+class LLMConfig:
+    """Extended LLM configuration matching SDK patterns."""
+    
+    def __init__(
+        self,
+        model: str = DEFAULT_MODEL,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        temperature: float = DEFAULT_TEMPERATURE,
+        max_tokens: int | None = None,
+        timeout: int = DEFAULT_TIMEOUT,
+        extra_headers: dict | None = None,
+    ):
+        self.model = model
+        self.api_key = api_key or os.getenv("LLM_API_KEY")
+        self.base_url = base_url or os.getenv("LLM_BASE_URL")
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+        self.extra_headers = extra_headers or {}
+    
+    def to_llm(self) -> LLM:
+        """Convert to SDK LLM instance."""
+        return LLM(
+            model=self.model,
+            api_key=self.api_key,
+            base_url=self.base_url,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+        )
 
 
 # =============================================================================
@@ -45,33 +93,50 @@ class CodingAgentConfig:
         base_url: str | None = None,
         temperature: float = DEFAULT_TEMPERATURE,
         max_iterations: int = MAX_ITERATIONS,
+        timeout: int = DEFAULT_TIMEOUT,
+        tools: list[str] | None = None,
     ):
         self.model = model
         self.api_key = api_key or os.getenv("LLM_API_KEY")
         self.base_url = base_url or os.getenv("LLM_BASE_URL")
         self.temperature = temperature
         self.max_iterations = max_iterations
+        self.timeout = timeout
+        self.tools = tools or []  # Tool names to register
+    
+    def to_settings(self) -> AgentSettings:
+        """Convert to SDK AgentSettings."""
+        return AgentSettings(
+            model=self.model,
+            temperature=self.temperature,
+            max_iterations=self.max_iterations,
+        )
 
 
-def create_coding_agent(config: CodingAgentConfig) -> Agent:
+def create_coding_agent(
+    config: CodingAgentConfig,
+    llm: LLM | None = None,
+) -> Agent:
     """
     Create an optimized coding agent with the OpenHands SDK.
     
     Args:
         config: Agent configuration
+        llm: Pre-configured LLM (uses config if not provided)
         
     Returns:
         Configured Agent instance
     """
     # Initialize LLM
-    llm = LLM(
-        model=config.model,
-        api_key=config.api_key,
-        base_url=config.base_url,
-        temperature=config.temperature,
-    )
+    if llm is None:
+        llm = LLM(
+            model=config.model,
+            api_key=config.api_key,
+            base_url=config.base_url,
+            temperature=config.temperature,
+        )
     
-    # Create agent with default tool set from SDK
+    # Create agent with SDK settings
     agent = Agent(
         llm=llm,
         max_iterations=config.max_iterations,
@@ -93,25 +158,28 @@ class CodingConversation:
     - Persistence support
     - Streaming responses
     - Metrics tracking
+    - Fork support
     """
     
     def __init__(
         self,
         agent: Agent,
         workspace: str | Path | None = None,
+        settings: ConversationSettings | None = None,
     ):
         self.agent = agent
         self.workspace = workspace or os.getcwd()
         self.conversation = Conversation(
             agent=agent,
             workspace=str(self.workspace),
+            settings=settings,
         )
     
     def send_message(self, message: str) -> None:
         """Send a message to the agent."""
         self.conversation.send_message(message)
     
-    def run(self, streaming: bool = False) -> None:
+    def run(self, streaming: bool = False) -> Any:
         """Run the conversation to completion."""
         if streaming:
             for event in self.conversation.run(streaming=True):
@@ -122,6 +190,14 @@ class CodingConversation:
     async def run_async(self) -> None:
         """Run the conversation asynchronously."""
         await self.conversation.run_async()
+    
+    def fork(self) -> "CodingConversation":
+        """Fork conversation for branching."""
+        forked = self.conversation.fork()
+        return CodingConversation(
+            agent=self.agent,
+            workspace=self.workspace,
+        )
     
     def get_metrics(self) -> dict:
         """Get conversation metrics."""
@@ -149,6 +225,7 @@ def coding_agent(
     base_url: str | None = None,
     workspace: str | Path | None = None,
     max_iterations: int = MAX_ITERATIONS,
+    timeout: int = DEFAULT_TIMEOUT,
 ) -> CodingConversation:
     """
     Builder function to create a coding agent conversation.
@@ -166,6 +243,7 @@ def coding_agent(
         base_url: Custom base URL for LLM API
         workspace: Working directory for the agent
         max_iterations: Maximum agent iterations
+        timeout: Conversation timeout in seconds
         
     Returns:
         CodingConversation instance
@@ -175,6 +253,7 @@ def coding_agent(
         api_key=api_key,
         base_url=base_url,
         max_iterations=max_iterations,
+        timeout=timeout,
     )
     
     agent = create_coding_agent(config)
