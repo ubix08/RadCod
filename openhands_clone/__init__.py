@@ -150,6 +150,24 @@ __all__ = [
 
 __version__ = "1.3.0"
 
+# Agentic Loop
+try:
+    from openhands_clone.agentic import (
+        AgenticConfig,
+        AgenticLoop,
+        ExecutionPlan,
+        ExecutionStep,
+        execute_task,
+    )
+    __all__.extend([
+        "AgenticConfig",
+        "AgenticLoop", 
+        "ExecutionPlan",
+        "execute_task",
+    ])
+except ImportError:
+    pass
+
 # Phase 3 additions
 try:
     from openhands_clone.mcp import (
