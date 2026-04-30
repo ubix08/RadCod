@@ -336,11 +336,26 @@ Respond in JSON:
         # REAL LLM call - use the SDK
         try:
             # Use SDK's LLM - this is how OpenHands does it
-            response = self.llm.chat(prompt)
+            # method is completion() not chat()
             
-            # Parse response (in production, would parse JSON)
-            # For now, simulate basic response
-            return self._parse_llm_response(response)
+            # Check for API key
+            api_key = os.environ.get('LLM_API_KEY')
+            if not api_key:
+                return {
+                    "reasoning": "No API key - using fallback",
+                    "action": {"tool": "terminal", "params": {"command": "ls -la"}},
+                    "done": False,
+                    "message": "API key not set - using terminal",
+                }
+            
+            response = self.llm.completion([
+                {"role": "user", "content": prompt}
+            ])
+            
+            # Parse response (get content)
+            content = response.content if hasattr(response, 'content') else str(response)
+            
+            return self._parse_llm_response(content)
             
         except Exception as e:
             # Fallback if LLM fails
@@ -366,77 +381,56 @@ Respond in JSON:
         Phase 2: ACTION
         
         Execute the chosen tool action.
-        Exactly like OpenHands:
-        1. Get action from reasoning
-        2. Execute tool via real OpenHands tools
-        3. Return observation
+        Using subprocess for now (real tools need executor setup).
         """
         action = reasoning_result.get("action")
         
         if not action:
             return {"done": True, "message": "No action needed"}
         
-        # Record action event (like OpenHands)
-        action_desc = f"Action: {action}"
-        self.history.append(action_event(content=action_desc))
+        # Record action event
+        action_desc = str(action)
+        self.history.append(action_event(action=action_desc))
         
-        # Execute using REAL OpenHands tools (now working!)
+        # Execute via tools
         tool_name = action.get("tool", "")
         params = action.get("params", {})
         
         try:
             if tool_name == "file_editor":
-                # Use real OpenHands file_editor tool
-                from openhands.tools.file_editor import file_editor
-                
                 action_type = params.get("action", "view")
                 path = params.get("path", "")
+                full_path = os.path.join(self.workspace, path)
                 
                 if action_type == "view":
-                    result = file_editor(
-                        action="read",
-                        path=path,
-                        working_dir=self.workspace,
-                    )
+                    with open(full_path, 'r') as f:
+                        content = f.read()
+                    observation = content
                 elif action_type == "str_replace":
-                    # For edit
                     old = params.get("old_str", "")
-                    new = params.get("new_str", "") 
-                    result = file_editor(
-                        action="edit",
-                        path=path,
-                        old_str=old,
-                        new_str=new,
-                        working_dir=self.workspace,
-                    )
+                    new = params.get("new_str", "")
+                    with open(full_path, 'r') as f:
+                        content = f.read()
+                    new_content = content.replace(old, new)
+                    with open(full_path, 'w') as f:
+                        f.write(new_content)
+                    observation = f"Edited {path}"
                 else:
-                    result = {"error": f"Unknown action: {action_type}"}
+                    observation = f"Unknown file_editor action: {action_type}"
                     
             elif tool_name == "terminal":
-                # Use real OpenHands Terminal tool
-                from openhands.tools.terminal import terminal
-                
+                import subprocess
                 cmd = params.get("command", "")
-                result = terminal(
-                    command=cmd,
-                    working_dir=self.workspace,
+                result = subprocess.run(
+                    cmd, shell=True, cwd=self.workspace,
+                    capture_output=True, text=True, timeout=30
                 )
-            else:
-                result = {"error": f"Unknown tool: {tool_name}"}
-            
-            # Build observation
-            observation = str(result)
-            if result.get("error"):
-                return {
-                    "observation": observation,
-                    "success": False,
-                    "error": result.get("error"),
-                }
+                observation = result.stdout + result.stderr
                 
-            return {
-                "observation": observation,
-                "success": True,
-            }
+            else:
+                observation = f"Unknown tool: {tool_name}"
+            
+            return {"observation": observation, "success": True}
             
         except Exception as e:
             return {
