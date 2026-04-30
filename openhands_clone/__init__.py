@@ -1,7 +1,9 @@
 """
-OpenHands-Clone
-===============
+OpenHands-Clone - Phase 2 Complete
+=============================
 An optimized agentic coding system built with OpenHands SDK.
+
+Phase 2: Events, Security, Condenser added.
 
 Quick Start:
     from openhands_clone import coding_agent
@@ -10,20 +12,24 @@ Quick Start:
     convo.send_message("Create a simple hello world app")
     convo.run()
 
-Features:
-    - Core SDK: LLM, Agent, Conversation
-    - Custom Tools: file_editor, terminal, task_tracker  
-    - Skills: code-review, debug, refactor, test, docs, security
-    - Sub-Agents: Parallel and sequential delegation
-    - Streaming: Real-time response streaming
-    - Persistence: Save and restore conversation state
-    - Metrics: Token usage and cost tracking
+Phase 2 Features:
+    - Events: Event system for tracking
+    - Security: Action analysis & confirmation
+    - Condenser: Context memory management
+    - SkillRegistry with priorities
+
+Phase 1 Features:
+    - SDK core integration
+    - 8 Skills with priorities
+    - CLI interface
+    - Persistence & metrics
 """
 
 from openhands_clone.agent import (
     # Core classes
     CodingAgentConfig,
     CodingConversation,
+    LLMConfig,
     # Builder
     coding_agent,
     create_coding_agent,
@@ -31,6 +37,9 @@ from openhands_clone.agent import (
     DEFAULT_MODEL,
     DEFAULT_TEMPERATURE,
     MAX_ITERATIONS,
+    # SDK imports
+    AgentSettings,
+    ConversationSettings,
 )
 
 from openhands_clone.skills import (
@@ -41,9 +50,39 @@ from openhands_clone.skills import (
     TestSkill,
     DocsSkill,
     SecuritySkill,
+    PlanningSkill,
+    CritiqueSkill,
+    SkillRegistry,
     get_skill,
     list_skills,
-    load_skills_from_dir,
+    find_skills,
+    register_skill,
+)
+
+from openhands_clone.events import (
+    Event,
+    EventType,
+    EventHistory,
+    message_event,
+    observation_event,
+    action_event,
+    thinking_event,
+    error_event,
+)
+
+from openhands_clone.security import (
+    SecurityAnalyzer,
+    SecurityPolicy,
+    SecurityLevel,
+    ActionStatus,
+    ActionClassifier,
+    ConfirmationHandler,
+)
+
+from openhands_clone.condenser import (
+    Condenser,
+    SummarizingCondenser,
+    CondenserSettings,
 )
 
 from openhands_clone.subagents import (
@@ -60,20 +99,47 @@ __all__ = [
     "CodingConversation", 
     "coding_agent",
     "create_coding_agent",
+    "LLMConfig",
     "DEFAULT_MODEL",
     "DEFAULT_TEMPERATURE",
     "MAX_ITERATIONS",
+    "AgentSettings",
+    "ConversationSettings",
     # Skills
     "Skill",
+    "SkillRegistry",
     "CodeReviewSkill",
     "DebugSkill",
     "RefactorSkill", 
     "TestSkill",
     "DocsSkill",
     "SecuritySkill",
+    "PlanningSkill",
+    "CritiqueSkill",
     "get_skill",
     "list_skills",
-    "load_skills_from_dir",
+    "find_skills",
+    "register_skill",
+    # Events
+    "Event",
+    "EventType",
+    "EventHistory",
+    "message_event",
+    "observation_event",
+    "action_event",
+    "thinking_event",
+    "error_event",
+    # Security
+    "SecurityAnalyzer",
+    "SecurityPolicy",
+    "SecurityLevel",
+    "ActionStatus",
+    "ActionClassifier",
+    "ConfirmationHandler",
+    # Condenser
+    "Condenser",
+    "SummarizingCondenser",
+    "CondenserSettings",
     # Sub-agents
     "SubAgent",
     "FunctionSubAgent",
@@ -82,4 +148,4 @@ __all__ = [
     "delegate_sequential",
 ]
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
