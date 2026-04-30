@@ -148,4 +148,53 @@ __all__ = [
     "delegate_sequential",
 ]
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
+
+# Phase 3 additions
+try:
+    from openhands_clone.mcp import (
+        MCPClient,
+        MCPServer,
+        MCPToolDefinition,
+    )
+    __all__.extend([
+        "MCPClient",
+        "MCPServer", 
+        "MCPToolDefinition",
+    ])
+except ImportError:
+    pass
+
+try:
+    from openhands_clone.workspace import (
+        LocalWorkspace,
+        RemoteWorkspace,
+        AsyncRemoteWorkspace,
+        create_workspace,
+    )
+    __all__.extend([
+        "LocalWorkspace",
+        "RemoteWorkspace", 
+        "AsyncRemoteWorkspace",
+        "create_workspace",
+    ])
+except ImportError:
+    pass
+
+try:
+    from openhands_clone.observability import (
+        Tracer,
+        Span,
+        Metrics,
+        MetricsCollector,
+        OTLPSExporter,
+    )
+    __all__.extend([
+        "Tracer",
+        "Span", 
+        "Metrics",
+        "MetricsCollector",
+        "OTLPSExporter",
+    ])
+except ImportError:
+    pass
