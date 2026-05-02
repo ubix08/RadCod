@@ -10,6 +10,9 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any
 from pathlib import Path
+from openhands_clone.workspace import LocalWorkspace, RemoteWorkspace
+
+# =============================================================================
 
 # Import REAL OpenHands tools
 try:
@@ -53,7 +56,7 @@ class ToolResult:
 class FileEditorTool:
     """Tool for file operations."""
     
-    def __init__(self, workspace: str):
+    def __init__(self, workspace: LocalWorkspace | RemoteWorkspace):
         self.workspace = workspace
     
     def view(self, path: str) -> ToolResult:
@@ -61,10 +64,8 @@ class FileEditorTool:
         import time
         start = time.time()
         
-        full_path = os.path.join(self.workspace, path)
-        
         try:
-            if not os.path.exists(full_path):
+            if not self.workspace.exists(path):
                 return ToolResult(
                     tool="file_editor.view",
                     success=False,
@@ -72,8 +73,7 @@ class FileEditorTool:
                     error=f"File not found: {path}",
                 )
             
-            with open(full_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+            content = self.workspace.read(path)
             
             return ToolResult(
                 tool="file_editor.view",
@@ -95,14 +95,8 @@ class FileEditorTool:
         import time
         start = time.time()
         
-        full_path = os.path.join(self.workspace, path)
-        
         try:
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            
-            with open(full_path, 'w', encoding='utf-8') as f:
-                f.write(content)
+            self.workspace.write(path, content)
             
             return ToolResult(
                 tool="file_editor.create",
@@ -124,11 +118,8 @@ class FileEditorTool:
         import time
         start = time.time()
         
-        full_path = os.path.join(self.workspace, path)
-        
         try:
-            with open(full_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+            content = self.workspace.read(path)
             
             if old not in content:
                 return ToolResult(
@@ -140,8 +131,7 @@ class FileEditorTool:
             
             new_content = content.replace(old, new)
             
-            with open(full_path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
+            self.workspace.write(path, new_content)
             
             return ToolResult(
                 tool="file_editor.edit",
@@ -163,21 +153,8 @@ class FileEditorTool:
         import time
         start = time.time()
         
-        full_path = os.path.join(self.workspace, path)
-        
         try:
-            if os.path.isfile(full_path):
-                os.remove(full_path)
-            elif os.path.isdir(full_path):
-                import shutil
-                shutil.rmtree(full_path)
-            else:
-                return ToolResult(
-                    tool="file_editor.delete",
-                    success=False,
-                    output="",
-                    error=f"Not found: {path}",
-                )
+            self.workspace.delete(path)
             
             return ToolResult(
                 tool="file_editor.delete",
@@ -239,7 +216,7 @@ class FileEditorTool:
 class TerminalTool:
     """Tool for terminal commands."""
     
-    def __init__(self, workspace: str):
+    def __init__(self, workspace: LocalWorkspace | RemoteWorkspace):
         self.workspace = workspace
     
     def run(self, command: str, timeout: int = 30, env: dict | None = None) -> ToolResult:
@@ -247,47 +224,15 @@ class TerminalTool:
         import time
         start = time.time()
         
-        # Merge environment
-        full_env = os.environ.copy()
-        if env:
-            full_env.update(env)
+        success, output = self.workspace.execute_command(command, timeout=timeout)
         
-        try:
-            result = subprocess.run(
-                command,
-                shell=True,
-                cwd=self.workspace,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                env=full_env,
-            )
-            
-            output = result.stdout + result.stderr
-            
-            return ToolResult(
-                tool="terminal.run",
-                success=result.returncode == 0,
-                output=output,
-                error=None if result.returncode == 0 else f"Exit code: {result.returncode}",
-                execution_time=time.time() - start,
-            )
-        except subprocess.TimeoutExpired:
-            return ToolResult(
-                tool="terminal.run",
-                success=False,
-                output="",
-                error="Command timed out",
-                execution_time=time.time() - start,
-            )
-        except Exception as e:
-            return ToolResult(
-                tool="terminal.run",
-                success=False,
-                output="",
-                error=str(e),
-                execution_time=time.time() - start,
-            )
+        return ToolResult(
+            tool="terminal.run",
+            success=success,
+            output=output,
+            error=None if success else f"Command failed: {output}",
+            execution_time=time.time() - start,
+        )
     
     def run_tests(self, pattern: str = "test") -> ToolResult:
         """Run tests."""
@@ -324,7 +269,7 @@ class ToolExecutor:
     Complete tool executor aggregating all tools.
     """
     
-    def __init__(self, workspace: str):
+    def __init__(self, workspace: LocalWorkspace | RemoteWorkspace):
         self.workspace = workspace
         self.file_editor = FileEditorTool(workspace)
         self.terminal = TerminalTool(workspace)
@@ -371,7 +316,7 @@ class ToolExecutor:
 # Functions
 # =============================================================================
 
-def create_tool_executor(workspace: str) -> ToolExecutor:
+def create_tool_executor(workspace: LocalWorkspace | RemoteWorkspace) -> ToolExecutor:
     """Create tool executor."""
     return ToolExecutor(workspace)
 

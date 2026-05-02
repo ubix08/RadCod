@@ -221,8 +221,8 @@ class AgenticLoop:
         )
         
         # Initialize components
-        self.workspace = config.workspace or os.getcwd()
-        self.tool_executor = ToolExecutor(workspace=self.workspace)
+        self.workspace_obj = LocalWorkspace(root=config.workspace or os.getcwd())
+        self.tool_executor = ToolExecutor(workspace=self.workspace_obj)
         self.security = SecurityAnalyzer() if config.enable_security else None
         
         # Execution state
@@ -395,49 +395,11 @@ Respond in JSON:
         # Execute via tools
         tool_name = action.get("tool", "")
         params = action.get("params", {})
+        # Flatten parameters for ToolExecutor.execute
+        # The executor expects params as keyword arguments
+        result = self.tool_executor.execute(tool_name, **params)
         
-        try:
-            if tool_name == "file_editor":
-                action_type = params.get("action", "view")
-                path = params.get("path", "")
-                full_path = os.path.join(self.workspace, path)
-                
-                if action_type == "view":
-                    with open(full_path, 'r') as f:
-                        content = f.read()
-                    observation = content
-                elif action_type == "str_replace":
-                    old = params.get("old_str", "")
-                    new = params.get("new_str", "")
-                    with open(full_path, 'r') as f:
-                        content = f.read()
-                    new_content = content.replace(old, new)
-                    with open(full_path, 'w') as f:
-                        f.write(new_content)
-                    observation = f"Edited {path}"
-                else:
-                    observation = f"Unknown file_editor action: {action_type}"
-                    
-            elif tool_name == "terminal":
-                import subprocess
-                cmd = params.get("command", "")
-                result = subprocess.run(
-                    cmd, shell=True, cwd=self.workspace,
-                    capture_output=True, text=True, timeout=30
-                )
-                observation = result.stdout + result.stderr
-                
-            else:
-                observation = f"Unknown tool: {tool_name}"
-            
-            return {"observation": observation, "success": True}
-            
-        except Exception as e:
-            return {
-                "observation": f"Error: {str(e)}",
-                "success": False, 
-                "error": str(e),
-            }
+        return {"observation": result.output, "success": result.success}
     
     def _observation_phase(self, action_result: dict) -> None:
         """
