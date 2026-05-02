@@ -17,19 +17,18 @@ from typing import Any
 
 # Try SDK skill integration
 try:
-    from openhands.sdk import Skill as SDKSkill
+    from openhands.sdk.skill import Skill as SDKSkill
     HAS_SDK_SKILL = True
 except ImportError:
-    SDKSkill = None
+    SDKSkill = object
     HAS_SDK_SKILL = False
-
 
 # =============================================================================
 # Skill Base Classes
 # =============================================================================
 
-class Skill:
-    """Base class for skills."""
+class Skill(SDKSkill):
+    """Base class for skills, inheriting from SDK Skill."""
     
     name: str = "base"
     description: str = "Base skill"
@@ -37,6 +36,7 @@ class Skill:
     priority: int = 0
     
     def __init__(self, **kwargs):
+        super().__init__()
         self.config = kwargs
     
     def get_prompt(self) -> str:
@@ -233,6 +233,35 @@ Be honest but constructive.
     priority = 4
 
 
+class GitHubSkill(Skill):
+    """Skill for GitHub interaction."""
+    
+    name = "github"
+    description = """
+    You are a GitHub expert. You can:
+    - Search for repositories
+    - Create issues
+    - Manage pull requests
+    
+    Use the GitHub API via available tools.
+    """
+    triggers = ["github", "pr", "issue", "repo", "repository"]
+    priority = 9
+
+
+class GitHubPRReviewSkill(Skill):
+    """Skill for PR reviews."""
+    
+    name = "github-pr-review"
+    description = """
+    You are a GitHub PR review expert.
+    - Provide inline comments and suggestions
+    - Use appropriate priority labels
+    """
+    triggers = ["pr review", "review pr", "pull request review"]
+    priority = 10
+
+
 # Register all skills
 _registry.register(CodeReviewSkill())
 _registry.register(DebugSkill())
@@ -242,6 +271,8 @@ _registry.register(DocsSkill())
 _registry.register(SecuritySkill())
 _registry.register(PlanningSkill())
 _registry.register(CritiqueSkill())
+_registry.register(GitHubSkill())
+_registry.register(GitHubPRReviewSkill())
 
 
 # =============================================================================
