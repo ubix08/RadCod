@@ -1,0 +1,6 @@
+[project]
+name = "radcod"
+version = "0.1.0"
+dependencies = [
+    "openhands-sdk",
+]
