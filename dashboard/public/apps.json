@@ -1,0 +1,16 @@
+[
+  {
+    "id": "app-1",
+    "name": "CRM System",
+    "template": "crm",
+    "status": "running",
+    "url": "http://localhost:3001"
+  },
+  {
+    "id": "app-2",
+    "name": "Inventory App",
+    "template": "inventory",
+    "status": "stopped",
+    "url": null
+  }
+]

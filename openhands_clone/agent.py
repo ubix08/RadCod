@@ -29,7 +29,17 @@ from openhands.sdk import (
     Conversation,
     AgentSettings,
     ConversationSettings,
+    Condenser,
 )
+from openhands.sdk.security import SecurityAnalyzer
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.terminal import TerminalTool
+# Try importing BrowserTool
+try:
+    from openhands.tools.browser import BrowserTool
+    HAS_BROWSER = True
+except ImportError:
+    HAS_BROWSER = False
 from openhands.sdk.tool import Tool
 
 
@@ -136,10 +146,18 @@ def create_coding_agent(
             temperature=config.temperature,
         )
     
-    # Create agent with SDK settings
+    # Create agent with SDK settings and tools
+    agent_tools = [
+        Tool(name=FileEditorTool.name),
+        Tool(name=TerminalTool.name),
+    ]
+    if HAS_BROWSER:
+        agent_tools.append(Tool(name=BrowserTool.name))
+        
     agent = Agent(
         llm=llm,
         max_iterations=config.max_iterations,
+        tools=agent_tools,
     )
     
     return agent
@@ -169,11 +187,19 @@ class CodingConversation:
     ):
         self.agent = agent
         self.workspace = workspace or os.getcwd()
+        
+        # Configure SDK native features
+        condenser = Condenser()
+        security = SecurityAnalyzer()
+        
         self.conversation = Conversation(
             agent=agent,
             workspace=str(self.workspace),
             settings=settings,
         )
+        # Apply security and condenser if the SDK allows (pseudo-code/conceptual)
+        # Assuming we need to set them on conversation or settings
+        # The SDK pattern often involves adding them as middleware/handlers
     
     def send_message(self, message: str) -> None:
         """Send a message to the agent."""

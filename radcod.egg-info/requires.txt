@@ -1,0 +1,10 @@
+openhands-sdk>=1.17.0
+flask>=2.0
+
+[dev]
+pytest
+pytest-asyncio
+ruff
+
+[web]
+flask>=3.0

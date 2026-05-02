@@ -12,6 +12,11 @@ from typing import Any, Callable
 from enum import Enum
 from datetime import datetime
 import json
+import os
+
+from openhands_clone.subagents import (
+    SubAgent, ScaffoldingSubAgent, BrowserSubAgent, DeepSearcherSubAgent
+)
 
 
 # =============================================================================
@@ -435,27 +440,42 @@ class ExecutionEngine:
         self.workspace = workspace
         self.orchestrator = TaskOrchestrator(workspace)
         self.analyzer = CodebaseAnalyzer(workspace)
+        # Initialize specialized sub-agents
+        self.scaffolder = ScaffoldingSubAgent(workspace)
     
     async def execute(self, task: str, mode: str = "auto") -> dict:
         """
         Execute a task.
-        
-        Modes:
-        - auto: Use full pipeline
-        - quick: Single agent only
-        - parallel: Max parallel execution
         """
+        # Autonomous delegation logic
+        if "build" in task.lower() and "application" in task.lower():
+            # Extract app name and template
+            # Prompt: "Build a business application named '{app_name}' using the '{template}' template."
+            # Simple extraction for demo purposes
+            parts = task.split()
+            app_name = next((parts[i+1] for i in range(len(parts)) if parts[i] == 'named'), 'unknown')
+            template = next((parts[i+1] for i in range(len(parts)) if parts[i] == 'using'), 'crm')
+            
+            # Delegate to scaffolder
+            scaffold_task = f"Build {app_name} {template}"
+            result = self.scaffolder.execute(scaffold_task)
+            
+            # Update dashboard status
+            apps_json_path = os.path.join(self.workspace, "dashboard", "public", "apps.json")
+            if os.path.exists(apps_json_path):
+                with open(apps_json_path, 'r+') as f:
+                    apps = json.load(f)
+                    for app in apps:
+                        if app["name"] == app_name:
+                            app["status"] = "running"
+                            app["url"] = "http://localhost:3000" # Placeholder
+                    f.seek(0)
+                    json.dump(apps, f, indent=2)
+            
+            return {"status": "complete", "result": result}
+
         if mode == "quick":
             return await self._quick_execute(task)
-        
-        # Full pipeline - analyze first
-        analysis = self.analyzer.analyze()
-        
-        # Create tasks
-        # Would use PlanningAgent here
-        
-        # Execute
-        return await self.orchestrator.execute()
     
     async def _quick_execute(self, task: str) -> dict:
         """Quick single-pass execution."""

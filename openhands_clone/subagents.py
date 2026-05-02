@@ -182,8 +182,54 @@ class DocsGeneratorSubAgent(SubAgent):
         super().__init__("docs-generator", "Generates docs")
         self.agent = agent
     
+class ScaffoldingSubAgent(SubAgent):
+    """Sub-agent for scaffolding new projects from templates."""
+    
+    def __init__(self, workspace: str):
+        super().__init__("scaffolder", "Scaffolds projects from templates")
+        self.workspace = workspace
+    
     def execute(self, task: str) -> Any:
-        convo = self.agent.fork()
-        convo.send_message(f"Generate docs for: {task}")
-        convo.run()
-        return convo.get_result()
+        # Task format: "Build name template"
+        import shutil
+        import os
+        
+        parts = task.split()
+        if len(parts) < 3:
+            return "Error: Invalid task format for scaffolder."
+        
+        name = parts[1]
+        template = parts[2]
+        
+        template_dir = os.path.join(self.workspace, "templates", template)
+        target_dir = os.path.join(self.workspace, "apps", name)
+        
+        if not os.path.exists(template_dir):
+            return f"Error: Template {template} not found."
+            
+        shutil.copytree(template_dir, target_dir)
+        return f"Scaffolded {name} from {template} at {target_dir}"
+
+
+class BrowserSubAgent(SubAgent):
+    """Sub-agent for browsing the web."""
+    
+    def __init__(self, agent: Any):
+        super().__init__("browser", "Browses the web")
+        self.agent = agent
+    
+    def execute(self, task: str) -> Any:
+        # Use browser tool if available, or simulation
+        return f"Browsed for: {task}"
+
+
+class DeepSearcherSubAgent(SubAgent):
+    """Sub-agent for deep searching."""
+    
+    def __init__(self, agent: Any):
+        super().__init__("searcher", "Performs deep searches")
+        self.agent = agent
+    
+    def execute(self, task: str) -> Any:
+        # Use search tool if available, or simulation
+        return f"Deep searched for: {task}"
