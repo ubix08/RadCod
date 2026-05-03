@@ -17,7 +17,6 @@ logger = logging.getLogger("radcod.direct_agent")
 class DirectNVIDIAllm:
     """Direct API LLM for NVIDIA - bypasses litellm."""
     
-    DEFAULT_KEY = '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'
     API_BASE = 'https://integrate.api.nvidia.com/v1'
     
     def __init__(
@@ -27,7 +26,10 @@ class DirectNVIDIAllm:
         timeout: int = 120,
     ):
         self.model = model
-        self.api_key = api_key or os.environ.get('NVIDIA_API_KEY') or self.DEFAULT_KEY
+        # API key MUST come from environment - never hardcode
+        self.api_key = api_key or os.environ.get('NVIDIA_API_KEY')
+        if not self.api_key:
+            raise ValueError("NVIDIA_API_KEY must be set in environment")
         self.timeout = timeout
         self._messages: List[dict] = []
     

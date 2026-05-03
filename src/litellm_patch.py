@@ -10,9 +10,8 @@ def patch_litellm():
     from litellm import main as litellm_main
     from litellm.main import completion as litellm_completion
     
-    # Set env var for NVIDIA (nvidia_nim provider looks for this)
-    if not os.environ.get('NVIDIA_NIM_API_KEY'):
-        os.environ['NVIDIA_NIM_API_KEY'] = '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'
+    # NOTE: NVIDIA_API_KEY must be set in environment by user
+    # Do NOT hardcode API keys
     
     # Store original
     original_completion = litellm_completion
@@ -63,12 +62,17 @@ def patch_litellm():
 
 def setup_nvidia_llm(model: str = None, api_key: str = None, api_base: str = None):
     """Create a properly configured LLM for NVIDIA."""
+    import os
     patch_litellm()
     
     from openhands.sdk import LLM
     
     model = model or "meta/llama-3.1-70b-instruct"
     api_base = api_base or "https://integrate.api.nvidia.com/v1"
-    api_key = api_key or "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"
+    
+    # API key must come from environment
+    api_key = api_key or os.environ.get('NVIDIA_API_KEY')
+    if not api_key:
+        raise ValueError("NVIDIA_API_KEY must be set in environment")
     
     return LLM(model=model, api_base=api_base, api_key=api_key)

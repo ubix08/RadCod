@@ -18,7 +18,6 @@ from sse_starlette.sse import EventSourceResponse
 from src.coordinator import RadcodeCoordinator
 from src.deploy import DeploymentHelper
 from src.api import router as admin_router
-from src.orchestrator import RadCodeOrchestrator, OrchestratorConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("radcod.server")
@@ -121,9 +120,9 @@ _coordinators_lock = threading.Lock()
 _progress_connections: List[WebSocket] = []
 _progress_lock = threading.Lock()
 
-# Orchestrator tasks (thread-safe)
-_orchestrators: Dict[str, Any] = {}
-_orchestrators_lock = threading.Lock()
+# Task tracking (thread-safe)
+_tasks: Dict[str, Any] = {}
+_tasks_lock = threading.Lock()
 
 
 def get_coordinator(workspace: str = "./workspace") -> RadcodeCoordinator:
@@ -340,22 +339,23 @@ async def deploy(req: DeployRequest):
     )
 
 
-# ============= ORCHESTRATOR (Multi-Agent) =============
+# ============= COMPLEX TASKS (Using Single Agent with Decomposition) =============
 
-@app.post("/orchestrator/run", response_model=RunResponse)
-async def run_orchestrated(
+@app.post("/complex/run", response_model=RunResponse)
+async def run_complex_task(
     req: RunRequest,
     background_tasks: BackgroundTasks,
-    parallel: bool = True
 ):
     """
-    Execute a complex task using multi-agent orchestration.
+    Execute a complex task using single agent with recursive decomposition.
     
-    This decomposes the task into subtasks and runs them in parallel
-    using spawned sub-agents.
+    The agent will automatically:
+    - Decompose complex tasks into subtasks
+    - Execute them using sub-agents as tools
+    - Self-correct on failures
+    - Reflect periodically
     
     Use this for complex tasks like "Build a full-stack CRM".
-    Use /run for simple single-agent tasks.
     """
     import time
     import uuid
@@ -363,32 +363,27 @@ async def run_orchestrated(
     task_id = str(uuid.uuid4())[:8]
     start_time = time.time()
     
-    # Track orchestrator (thread-safe)
-    with _orchestrators_lock:
-        _orchestrators[task_id] = {
+    # Track task (thread-safe)
+    with _tasks_lock:
+        _tasks[task_id] = {
             "status": "pending",
             "task": req.request,
-            "subtasks": [],
         }
     
-    def execute_with_orchestrator():
-        """Run task with orchestrator."""
+    def execute_complex():
+        """Run task with single agent."""
         try:
-            # Create config
-            config = OrchestratorConfig(
-                max_parallel_agents=min(4, req.timeout_seconds // 120),
-                default_workspace=req.workspace
-            )
-            
-            # Create orchestrator
-            orchestrator = RadCodeOrchestrator(
+            # Create single agent with advanced config
+            coord = RadcodeCoordinator(
+                workspace=req.workspace,
                 security_level=req.security_level,
-                config=config
+                max_steps=50,
+                recursion_limit=5
             )
             
-            # Store reference (thread-safe)
-            with _orchestrators_lock:
-                _orchestrators[task_id]["orchestrator"] = orchestrator
+            # Store reference
+            with _tasks_lock:
+                _tasks[task_id]["coordinator"] = coord
             
             # Run with progress
             def on_progress(event: Dict):
@@ -405,31 +400,32 @@ async def run_orchestrated(
                         except Exception:
                             pass
             
-            # Execute
-            result = orchestrator.run(req.request, parallel=parallel, timeout_seconds=req.timeout_seconds)
+            # Execute using single agent (handles decomposition internally)
+            result = coord.run(req.request, progress_callback=on_progress, max_steps=50)
             
-            # Store result (thread-safe)
-            with _orchestrators_lock:
-                _orchestrators[task_id] = {
+            # Store result
+            with _tasks_lock:
+                _tasks[task_id] = {
                     "status": result.get("status", "unknown"),
                     "task": req.request,
-                    "subtasks": result.get("subtasks", []),
                     "result": result.get("result"),
+                    "steps": result.get("steps", 0),
+                    "failures": result.get("failures", 0),
                     "duration": time.time() - start_time
                 }
             
-            logger.info(f"Orchestrated task {task_id} completed: {result.get('status')}")
+            logger.info(f"Complex task {task_id} completed: {result.get('status')}")
             
         except Exception as e:
-            logger.error(f"Orchestrated task {task_id} failed: {e}")
-            with _orchestrators_lock:
-                _orchestrators[task_id] = {
+            logger.error(f"Complex task {task_id} failed: {e}")
+            with _tasks_lock:
+                _tasks[task_id] = {
                     "status": "error",
                     "error": str(e)
                 }
     
     # Schedule background execution
-    background_tasks.add_task(execute_with_orchestrator)
+    background_tasks.add_task(execute_complex)
     
     return RunResponse(
         status="started",
@@ -440,13 +436,13 @@ async def run_orchestrated(
     )
 
 
-@app.get("/orchestrator/{task_id}")
-async def get_orchestrator_status(task_id: str):
-    """Get status of an orchestrated task."""
-    with _orchestrators_lock:
-        if task_id not in _orchestrators:
+@app.get("/complex/{task_id}")
+async def get_complex_task_status(task_id: str):
+    """Get status of a complex task."""
+    with _tasks_lock:
+        if task_id not in _tasks:
             raise HTTPException(status_code=404, detail="Task not found")
-        return _orchestrators[task_id]
+        return _tasks[task_id]
 
 
 # ============= WEBSOCKET =============

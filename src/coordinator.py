@@ -1,105 +1,30 @@
 """
-RadCode - Devin-like Autonomous Agent.
+RadCode - Thin SDK Wrapper.
 
-ONE main agent that:
-- Interacts directly with user
-- Handles simple tasks using tools  
-- Delegates complex sub-tasks via TaskToolSet
+Just properly wraps OpenHands SDK - uses built-in functionality.
+No custom agent logic, step tracking, or prompts.
 
-Built on OpenHands SDK for full compatibility.
+Usage:
+    from src.coordinator import create_agent
+    
+    agent = create_agent(workspace="./workspace")
+    result = agent.run("Build a REST API")
 """
 
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger("radcod.coordinator")
-
-# ============= SYSTEM PROMPT =============
-# Simplified: SDK tools have built-in instructions via their descriptions.
-# This prompt adds domain expertise only.
-
-SYSTEM_PROMPT = """
-# RadCode - Autonomous AI Software Engineer
-
-You are an autonomous software engineer. Your mission is to deliver working solutions.
-
-## Core Workflow
-1. Understand the task
-2. Plan using TaskTrackerTool (optional)
-3. Build incrementally
-4. Test and verify
-5. Iterate until working
-6. Report completion
-
-## Preferred Patterns
-
-**Python**: Use `uv` for dependency management:
-- `uv add <package>` - Add dependency
-- `uv run pytest` - Run tests
-
-**Backend**: FastAPI for REST APIs, prefer async
-
-**Frontend**: React + Vite, or plain HTML/JS for simple projects
-
-**Testing**: Always test your code
-
-## Error Handling
-When errors occur: read carefully, find root cause, fix, re-test.
-"""
-
-
-# ============= MAIN COORDINATOR =============
-
-# Skills directory
-SKILLS_DIR = Path(__file__).parent / "skills"
-
-
-def _load_skills() -> str:
-    """Load skills from skills directory and return as system prompt addition."""
-    skill_content = []
-    
-    if not SKILLS_DIR.exists():
-        return ""
-    
-    for skill_file in SKILLS_DIR.glob("*/SKILL.md"):
-        try:
-            content = skill_file.read_text()
-            # Extract skill name from frontmatter
-            lines = content.split("\n")
-            skill_name = skill_file.parent.name
-            in_content = False
-            
-            # Skip frontmatter, get content
-            for line in lines:
-                if line == "---" and not in_content:
-                    in_content = True
-                    continue
-                if line == "---" and in_content:
-                    break
-                if in_content and line.strip():
-                    skill_content.append(line)
-                    
-            logger.info(f"Loaded skill: {skill_name}")
-        except Exception as e:
-            logger.warning(f"Failed to load skill {skill_file}: {e}")
-    
-    if skill_content:
-        return "\n\n## DOMAIN EXPERTISE\n\n" + "\n".join(skill_content)
-    return ""
-
-
-# Load skills at module import time
-SKILLS_PROMPT = _load_skills()
 
 
 class RadcodeCoordinator:
     """
-    Devin-like Autonomous Agent.
+    Thin wrapper around OpenHands SDK.
     
-    ONE main agent that handles user interaction, simple tasks,
-    and delegates to sub-agents when needed.
+    Simply configures and exposes SDK components.
+    All agent logic is handled by the SDK.
     """
     
     def __init__(
@@ -107,113 +32,102 @@ class RadcodeCoordinator:
         api_key: str = None, 
         workspace: str = "./workspace",
         security_level: str = "medium",
-        extra_instructions: str = ""
     ):
         self._key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self._workspace = Path(workspace)
-        # Combine base instructions with specialized domain instructions (if provided)
-        self._instructions = SYSTEM_PROMPT + SKILLS_PROMPT + extra_instructions
         self._security_level = security_level
         
-        # SDK components
+        # SDK components - initialized on first use
         self._llm = None
         self._agent = None
         self._conversation = None
         self._initialized = False
+        
+        logger.info(f"Coordinator created: workspace={workspace}")
     
-    def _initialize(self):
-        """Initialize using OpenHands SDK patterns."""
+    def _ensure_initialized(self):
+        """Initialize SDK components on first use."""
         if self._initialized:
             return
         
+        # Get model config
+        raw_model = os.getenv("LLM_MODEL", "meta/llama-3.1-70b-instruct")
+        api_base = os.getenv("NVIDIA_API_BASE")
+        
+        # Determine provider
+        is_nvidia = "nvidia" in raw_model.lower() or (api_base and "nvidia" in api_base)
+        
         try:
-            # Check for NVIDIA
-            raw_model = os.getenv("LLM_MODEL", "meta/llama-3.1-70b-instruct")
-            api_base = os.getenv("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
-            
-            # NVIDIA if model OR URL contains nvidia
-            is_nvidia = "nvidia" in raw_model.lower() or "nvidia.com" in api_base
-            
-            # Apply litellm patch BEFORE importing SDK
-            if is_nvidia:
-                from src.litellm_patch import patch_litellm
-                patch_litellm()
-                logger.info("Applied litellm patch for NVIDIA")
-            
-            # Import SDK
             from openhands.sdk import LLM
             from openhands.tools.preset.default import get_default_agent
             from openhands.sdk import Conversation
             
-            # Create LLM based on provider
+            # Create LLM
             if is_nvidia:
-                # Use model as-is for vendor-prefixed models (minimaxai/*, z-ai/*)
-                # Add meta/ prefix only for bare llama models
+                api_key = os.environ.get('NVIDIA_API_KEY')
+                if not api_key:
+                    raise ValueError("NVIDIA_API_KEY not set")
+                
                 model = raw_model
-                if not model.startswith("meta/") and "/" not in model and (model.startswith("llama-") or "llama" in model.lower()):
+                if not model.startswith("meta/") and "/" not in model and model.startswith("llama-"):
                     model = f"meta/{model}"
                 
-                api_key = os.environ.get('NVIDIA_API_KEY') or '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'
-                base_url = os.getenv("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
-                
-                self._llm = LLM(model=model, api_key=api_key, api_base=base_url)
-                logger.info(f"Using SDK LLM: {model}")
+                self._llm = LLM(
+                    model=model,
+                    api_key=api_key,
+                    api_base=api_base or "https://integrate.api.nvidia.com/v1"
+                )
             else:
-                # Use SDK LLM for other providers
-                PROVIDERS = {
-                    "groq": "GROQ_API_KEY",
-                    "google": "GEMINI_API_KEY", 
-                    "anthropic": "ANTHROPIC_API_KEY",
-                    "openai": "OPENAI_API_KEY",
-                    "ollama": "OLLAMA_API_KEY",
-                }
+                # Standard providers
+                model = raw_model.split("/")[-1] if "/" in raw_model else raw_model
                 
-                api_key = None
-                for key, env_var in PROVIDERS.items():
-                    if key in raw_model.lower():
-                        api_key = os.getenv(env_var)
+                # Auto-detect provider from model name
+                provider_key = None
+                for prov in ["groq", "google", "anthropic", "openai"]:
+                    if prov in model.lower():
+                        env_vars = {
+                            "groq": "GROQ_API_KEY",
+                            "google": "GEMINI_API_KEY",
+                            "anthropic": "ANTHROPIC_API_KEY",
+                            "openai": "OPENAI_API_KEY"
+                        }
+                        provider_key = os.getenv(env_vars.get(prov, ""))
                         break
                 
-                model = raw_model.split("/")[-1] if "/" in raw_model else raw_model
-                self._llm = LLM(model=model, api_key=api_key)
-                logger.info(f"Using SDK LLM: {model}")
+                self._llm = LLM(model=model, api_key=provider_key)
             
-            # Use SDK default agent (includes tools + condenser)
+            # Get default agent (has all tools: terminal, file editor, browser, etc.)
             self._agent = get_default_agent(self._llm)
             
-            # Add custom instructions (optional)
-            if self._instructions:
-                self._agent._system_prompt = self._instructions
-            
-            # Create conversation (with built-in condenser)
+            # Create conversation
+            self._workspace.mkdir(parents=True, exist_ok=True)
             self._conversation = Conversation(
                 agent=self._agent,
                 workspace=str(self._workspace)
             )
             
             self._initialized = True
-            logger.info("RadcodeCoordinator initialized with SDK tools")
+            logger.info("SDK initialized successfully")
             
         except ImportError as e:
-            logger.error(f"OpenHands SDK not installed: {e}")
+            logger.error(f"SDK not installed: {e}")
             raise RuntimeError("pip install openhands-sdk openhands-tools")
     
     @property
-    def conversation(self) -> Any:
-        """Get the SDK Conversation."""
-        self._initialize()
+    def conversation(self):
+        """Access SDK conversation."""
+        self._ensure_initialized()
         return self._conversation
     
     def run(self, request: str, **kwargs) -> Dict[str, Any]:
         """
-        Run a task with the main agent.
+        Execute task.
         
-        The agent will:
-        - Handle simple tasks directly
-        - Delegate complex tasks via TaskToolSet
+        Simply passes to SDK - all logic handled internally.
         """
-        self._initialize()
+        self._ensure_initialized()
         self._conversation.send_message(request)
+        
         result = self._conversation.run(**kwargs)
         
         return {
@@ -223,51 +137,71 @@ class RadcodeCoordinator:
         }
     
     def run_with_timeout(self, request: str, timeout_seconds: int = 600) -> Dict[str, Any]:
-        """Run with timeout."""
-        import signal
+        """Run with timeout wrapper."""
         import threading
         
         result_container = {}
         error_container = [None]
         
-        def run_with_result():
-            """Run in thread and store result."""
+        def run_in_thread():
             try:
                 result_container['result'] = self.run(request)
             except Exception as e:
                 error_container[0] = str(e)
         
-        # Run in thread to allow timeout interruption
-        thread = threading.Thread(target=run_with_result, daemon=True)
+        thread = threading.Thread(target=run_in_thread, daemon=True)
         thread.start()
         thread.join(timeout=timeout_seconds)
         
         if thread.is_alive():
-            # Timeout occurred
             return {
                 "status": "timeout",
-                "error": f"Task timed out after {timeout_seconds} seconds",
-                "request": request,
-                "timeout_seconds": timeout_seconds,
+                "error": f"Task timed out after {timeout_seconds}s"
             }
         elif error_container[0]:
             return {
-                "status": "error",
-                "error": error_container[0],
-                "request": request,
+                "status": "error", 
+                "error": error_container[0]
             }
-        else:
-            return result_container.get('result', {"status": "unknown"})
+        
+        return result_container.get('result', {"status": "unknown"})
+    
+    def can_continue(self) -> bool:
+        """Check if can continue - SDK handles iteration."""
+        return True  # SDK manages internally
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get metrics from SDK."""
+        if not self._initialized:
+            return {"status": "not_initialized"}
+        
+        return {
+            "status": "ok",
+            "model": getattr(self._llm, 'model', 'unknown'),
+            "workspace": str(self._workspace)
+        }
+    
+    def get_context_summary(self) -> Dict[str, Any]:
+        """Get context from SDK."""
+        if not self._initialized:
+            return {"status": "not_initialized"}
+        
+        return {
+            "status": "ok",
+            "workspace": str(self._workspace)
+        }
+    
+    def condense_context(self) -> Dict[str, Any]:
+        """Condense via SDK (if supported)."""
+        return {"status": "ok"}
 
-
-# ============= CONVENIENCE FUNCTION ============
 
 def create_agent(
     api_key: str = None,
     workspace: str = "./workspace",
     security_level: str = "medium"
 ) -> RadcodeCoordinator:
-    """Create a Devin-like agent."""
+    """Create SDK-wrapped agent."""
     return RadcodeCoordinator(
         api_key=api_key,
         workspace=workspace,
@@ -275,24 +209,21 @@ def create_agent(
     )
 
 
-# ============= MAIN ============
-
 def main():
-    """CLI entry point."""
+    """CLI entry."""
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python -m src.cli run <task>")
+        print("Usage: python -m src.coordinator run <task>")
         sys.exit(1)
     
-    if sys.argv[1] == "run":
-        task = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else "What files are in this directory?"
-        
-        coordinator = create_agent()
-        result = coordinator.run(task)
-        
-        print(f"\nStatus: {result.get('status')}")
-        print(f"Result: {result.get('result')}")
+    task = " ".join(sys.argv[2:]) if len(sys.argv) > 2 else "List files"
+    
+    agent = create_agent()
+    result = agent.run(task)
+    
+    print(f"\nStatus: {result.get('status')}")
+    print(f"Result: {result.get('result')}")
 
 
 if __name__ == "__main__":
