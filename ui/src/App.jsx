@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
 import Header from './components/Header'
@@ -8,11 +8,28 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [messages, setMessages] = useState([])
   const [taskStatus, setTaskStatus] = useState(null)
-  const [currentTask, setCurrentTask] = useState(null)
+  const [currentTaskId, setCurrentTaskId] = useState(null)
   const [workspace, setWorkspace] = useState('default')
+  const [isLoading, setIsLoading] = useState(false)
+  const [systemStatus, setSystemStatus] = useState(null)
   const messagesEndRef = useRef(null)
   
   const { onMessage } = useWebSocket()
+  
+  // Fetch system health on mount
+  useEffect(() => {
+    fetchSystemStatus()
+  }, [])
+  
+  const fetchSystemStatus = async () => {
+    try {
+      const res = await fetch('/api/v1/health')
+      const data = await res.json()
+      setSystemStatus(data)
+    } catch (e) {
+      setSystemStatus({ status: 'offline' })
+    }
+  }
   
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -25,21 +42,28 @@ export default function App() {
   // Listen for WebSocket progress updates
   useEffect(() => {
     const unsubscribe = onMessage((data) => {
-      if (data.status === 'running') {
-        setMessages(prev => [...prev.slice(0, -1), {
-          ...prev[prev.length - 1],
-          content: data.action || 'Working...'
-        }])
+      if (data.step !== undefined) {
+        setMessages(prev => {
+          const lastMsg = prev[prev.length - 1]
+          if (lastMsg?.role === 'assistant') {
+            return [...prev.slice(0, -1), {
+              ...lastMsg,
+              content: data.action || `Step ${data.step}: Working...`,
+              progress: data
+            }]
+          }
+          return prev
+        })
       }
     })
     return unsubscribe
   }, [onMessage])
   
-  const handleSend = async (text) => {
-    if (!text.trim()) return
+  const handleSend = useCallback(async (text) => {
+    if (!text.trim() || isLoading) return
     
     const userMsg = {
-      id: Date.now(),
+      id: `user-${Date.now()}`,
       role: 'user',
       content: text,
       timestamp: Date.now()
@@ -47,8 +71,9 @@ export default function App() {
     
     setMessages(prev => [...prev, userMsg])
     
+    const assistantMsgId = `assistant-${Date.now()}`
     const assistantMsg = {
-      id: Date.now() + 1,
+      id: assistantMsgId,
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
@@ -57,6 +82,7 @@ export default function App() {
     
     setMessages(prev => [...prev, assistantMsg])
     setTaskStatus('running')
+    setIsLoading(true)
     
     try {
       const response = await fetch('/api/v1/tasks', {
@@ -64,37 +90,57 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           request: text,
-          workspace
+          workspace,
+          timeout_seconds: 600
         })
       })
       
       const data = await response.json()
-      setCurrentTask(data.task_id)
       
-      // Task status updated via WebSocket or polling
+      if (data.task_id) {
+        setCurrentTaskId(data.task_id)
+      }
     } catch (err) {
       setTaskStatus('error')
+      setIsLoading(false)
       setMessages(prev => prev.map(m => 
-        m.id === assistantMsg.id 
+        m.id === assistantMsgId 
           ? { ...m, content: 'Error: ' + err.message, loading: false }
           : m
       ))
     }
-  }
+  }, [workspace, isLoading])
   
   // Poll for task completion
-  useTaskPolling(currentTask, (statusData) => {
+  useTaskPolling(currentTaskId, (statusData) => {
     setTaskStatus(statusData.status)
+    
     if (statusData.status === 'success' || statusData.status === 'completed') {
-      setMessages(prev => prev.map(m => 
-        m.id === (currentTask + 1) ? { ...m, content: statusData.result || 'Task completed', loading: false }
-          : m
-      ))
+      setIsLoading(false)
+      setMessages(prev => prev.map(m => {
+        if (m.loading) {
+          return {
+            ...m,
+            content: statusData.result || 'Task completed successfully',
+            loading: false,
+            status: 'success'
+          }
+        }
+        return m
+      }))
     } else if (statusData.status === 'failed') {
-      setMessages(prev => prev.map(m => 
-        m.id === (currentTask + 1) ? { ...m, content: statusData.error || 'Task failed', loading: false }
-          : m
-      ))
+      setIsLoading(false)
+      setMessages(prev => prev.map(m => {
+        if (m.loading) {
+          return {
+            ...m,
+            content: statusData.error || 'Task failed',
+            loading: false,
+            status: 'error'
+          }
+        }
+        return m
+      }))
     }
   })
   
@@ -104,7 +150,11 @@ export default function App() {
         isOpen={sidebarOpen} 
         onClose={() => setSidebarOpen(false)}
         currentWorkspace={workspace}
-        onWorkspaceChange={setWorkspace}
+        onWorkspaceChange={(ws) => {
+          setWorkspace(ws)
+          setSidebarOpen(false)
+        }}
+        systemStatus={systemStatus}
       />
       
       <main className="main">
@@ -113,12 +163,14 @@ export default function App() {
           workspace={workspace}
           taskStatus={taskStatus}
           onWorkspaceChange={setWorkspace}
+          systemStatus={systemStatus}
         />
         
         <ChatArea 
           messages={messages}
           onSend={handleSend}
           messagesEndRef={messagesEndRef}
+          disabled={isLoading}
         />
       </main>
       
