@@ -111,18 +111,27 @@ class DeployResponse(BaseModel):
 
 # ============= GLOBAL STATE =============
 
+import threading
+
 # Active coordinators per workspace
 _coordinators: Dict[str, RadcodeCoordinator] = {}
+_coordinators_lock = threading.Lock()
 
 # WebSocket connections for progress
 _progress_connections: List[WebSocket] = []
+_progress_lock = threading.Lock()
+
+# Orchestrator tasks (thread-safe)
+_orchestrators: Dict[str, Any] = {}
+_orchestrators_lock = threading.Lock()
 
 
 def get_coordinator(workspace: str = "./workspace") -> RadcodeCoordinator:
-    """Get or create coordinator for workspace."""
-    if workspace not in _coordinators:
-        _coordinators[workspace] = RadcodeCoordinator(workspace=workspace)
-    return _coordinators[workspace]
+    """Get or create coordinator for workspace (thread-safe)."""
+    with _coordinators_lock:
+        if workspace not in _coordinators:
+            _coordinators[workspace] = RadcodeCoordinator(workspace=workspace)
+        return _coordinators[workspace]
 
 
 # ============= LIFECYCLE =============
@@ -354,12 +363,13 @@ async def run_orchestrated(
     task_id = str(uuid.uuid4())[:8]
     start_time = time.time()
     
-    # Track orchestrator
-    _orchestrators[task_id] = {
-        "status": "pending",
-        "task": req.request,
-        "subtasks": [],
-    }
+    # Track orchestrator (thread-safe)
+    with _orchestrators_lock:
+        _orchestrators[task_id] = {
+            "status": "pending",
+            "task": req.request,
+            "subtasks": [],
+        }
     
     def execute_with_orchestrator():
         """Run task with orchestrator."""
@@ -376,43 +386,47 @@ async def run_orchestrated(
                 config=config
             )
             
-            # Store reference
-            _orchestrators[task_id]["orchestrator"] = orchestrator
+            # Store reference (thread-safe)
+            with _orchestrators_lock:
+                _orchestrators[task_id]["orchestrator"] = orchestrator
             
             # Run with progress
             def on_progress(event: Dict):
-                for ws in _progress_connections:
-                    try:
-                        import asyncio
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            loop.call_soon_threadsafe(
-                                ws.send_json,
-                                {"task_id": task_id, **event}
-                            )
-                    except Exception:
-                        pass
+                with _progress_lock:
+                    for ws in _progress_connections:
+                        try:
+                            import asyncio
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                loop.call_soon_threadsafe(
+                                    ws.send_json,
+                                    {"task_id": task_id, **event}
+                                )
+                        except Exception:
+                            pass
             
             # Execute
-            result = orchestrator.run(req.request, parallel=parallel)
+            result = orchestrator.run(req.request, parallel=parallel, timeout_seconds=req.timeout_seconds)
             
-            # Store result
-            _orchestrators[task_id] = {
-                "status": result.get("status", "unknown"),
-                "task": req.request,
-                "subtasks": result.get("subtasks", []),
-                "result": result.get("result"),
-                "duration": time.time() - start_time
-            }
+            # Store result (thread-safe)
+            with _orchestrators_lock:
+                _orchestrators[task_id] = {
+                    "status": result.get("status", "unknown"),
+                    "task": req.request,
+                    "subtasks": result.get("subtasks", []),
+                    "result": result.get("result"),
+                    "duration": time.time() - start_time
+                }
             
             logger.info(f"Orchestrated task {task_id} completed: {result.get('status')}")
             
         except Exception as e:
             logger.error(f"Orchestrated task {task_id} failed: {e}")
-            _orchestrators[task_id] = {
-                "status": "error",
-                "error": str(e)
-            }
+            with _orchestrators_lock:
+                _orchestrators[task_id] = {
+                    "status": "error",
+                    "error": str(e)
+                }
     
     # Schedule background execution
     background_tasks.add_task(execute_with_orchestrator)
@@ -429,14 +443,10 @@ async def run_orchestrated(
 @app.get("/orchestrator/{task_id}")
 async def get_orchestrator_status(task_id: str):
     """Get status of an orchestrated task."""
-    if task_id not in _orchestrators:
-        raise HTTPException(status_code=404, detail="Task not found")
-    
-    return _orchestrators[task_id]
-
-
-# Dict to track orchestrator tasks
-_orchestrators: Dict[str, Any] = {}
+    with _orchestrators_lock:
+        if task_id not in _orchestrators:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return _orchestrators[task_id]
 
 
 # ============= WEBSOCKET =============
@@ -446,7 +456,10 @@ _orchestrators: Dict[str, Any] = {}
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket for real-time progress."""
     await websocket.accept()
-    _progress_connections.append(websocket)
+    
+    # Thread-safe add
+    with _progress_lock:
+        _progress_connections.append(websocket)
     
     try:
         while True:
@@ -470,8 +483,9 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         pass
     finally:
-        if websocket in _progress_connections:
-            _progress_connections.remove(websocket)
+        with _progress_lock:
+            if websocket in _progress_connections:
+                _progress_connections.remove(websocket)
 
 
 # ============= STANDALONE =============

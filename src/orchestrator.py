@@ -230,6 +230,11 @@ class RadCodeOrchestrator:
     def _can_run(self, subtask: SubTask) -> bool:
         """Check if subtask dependencies are satisfied."""
         for dep_id in subtask.dependencies:
+            # Check if dependency exists
+            if dep_id not in self._subtasks:
+                logger.warning(f"Unknown dependency: {dep_id} for {subtask.name}")
+                return False
+            
             dep = self._subtasks.get(dep_id)
             if dep and dep.status != SubTaskStatus.SUCCESS:
                 return False
@@ -301,18 +306,24 @@ class RadCodeOrchestrator:
         
         return subtask
     
-    def run(self, task: str, parallel: bool = True) -> Dict[str, Any]:
+    def run(self, task: str, parallel: bool = True, timeout_seconds: int = 600) -> Dict[str, Any]:
         """
         Execute a complex task using multi-agent orchestration.
         
         Args:
             task: The task to execute
             parallel: Run independent subtasks in parallel
+            timeout_seconds: Max time for entire orchestration (default 10 min, max 30 min)
             
         Returns:
             Dict with results and metadata
         """
         import uuid
+        import time
+        
+        # Enforce timeout (max 30 minutes)
+        timeout = min(timeout_seconds, 1800)
+        start_time = time.time()
         
         # Step 1: Decompose
         subtasks = self.decompose(task)
@@ -330,14 +341,20 @@ class RadCodeOrchestrator:
         # Step 3: Aggregate
         final_result = self.aggregate(results)
         
+        # Check timeout
+        elapsed = time.time() - start_time
+        timed_out = elapsed > timeout
+        
         return {
-            "status": "success" if all(s.status == SubTaskStatus.SUCCESS for s in results) else "partial",
+            "status": "timeout" if timed_out else ("success" if all(s.status == SubTaskStatus.SUCCESS for s in results) else "partial"),
             "task": task,
             "subtasks": [s.to_dict() for s in results],
             "result": final_result,
             "total_subtasks": len(subtasks),
             "successful": sum(1 for s in results if s.status == SubTaskStatus.SUCCESS),
             "failed": sum(1 for s in results if s.status == SubTaskStatus.FAILED),
+            "duration_seconds": elapsed,
+            "timeout": timed_out,
         }
     
     def _run_sequential(self, subtasks: List[SubTask]) -> List[SubTask]:
@@ -353,32 +370,44 @@ class RadCodeOrchestrator:
         import concurrent.futures
         
         results = []
+        pending = list(subtasks)  # Track pending
         max_workers = self._config.max_parallel_agents
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Track running futures
             futures = {}
             
-            while len(results) < len(subtasks):
-                # Find ready subtasks
-                ready = [s for s in subtasks if s not in results and self._can_run(s)]
+            while pending or futures:
+                # Find ready subtasks (dependencies satisfied and not yet run)
+                ready = [s for s in pending if self._can_run(s)]
                 
-                # Submit ready tasks
-                for subtask in ready[:max_workers]:
+                # Submit ready tasks (up to max workers)
+                for subtask in ready[:max_workers - len(futures)]:
                     future = executor.submit(self._run_subtask_sync, subtask)
                     futures[future] = subtask
+                    pending.remove(subtask)
                 
                 if not futures:
+                    # Nothing can run - check if blocked or done
+                    if pending:
+                        logger.warning(f"Blocked subtasks remaining: {len(pending)}")
+                        # Move one blocked task to results with cancelled status
+                        blocked = pending.pop(0)
+                        blocked.status = SubTaskStatus.CANCELLED
+                        blocked.error = "Dependencies cannot be satisfied"
+                        results.append(blocked)
                     break
                 
                 # Wait for any to complete
-                done, _ = concurrent.futures.wait(futures.keys(), return_when=concurrent.futures.FIRST_COMPLETED)
+                done, _ = concurrent.futures.wait(
+                    futures.keys(), 
+                    return_when=concurrent.futures.FIRST_COMPLETED
+                )
                 
                 for future in done:
                     subtask = futures.pop(future)
                     results.append(subtask)
                     
-                    # Check if failed and propagate
+                    # Propagate failure to dependents
                     if subtask.status == SubTaskStatus.FAILED:
                         self._propagate_failure(subtask)
         
@@ -393,8 +422,6 @@ class RadCodeOrchestrator:
     
     def aggregate(self, results: List[SubTask]) -> Dict[str, Any]:
         """Aggregate results from subtasks."""
-        Coordinator = self._get_coordinator()
-        
         # Create summary
         success_count = sum(1 for r in results if r.status == SubTaskStatus.SUCCESS)
         failed_count = sum(1 for r in results if r.status == SubTaskStatus.FAILED)
