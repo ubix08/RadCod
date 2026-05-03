@@ -15,7 +15,7 @@ import os
 import logging
 import json
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 logger = logging.getLogger("radcod.coordinator")
 
