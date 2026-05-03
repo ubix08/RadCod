@@ -22,6 +22,13 @@ from src.api import router as admin_router
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("radcod.server")
 
+# Load .env file if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 
 # ============= REQUEST/RESPONSE MODELS =============
 

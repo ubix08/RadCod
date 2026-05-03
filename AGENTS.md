@@ -177,4 +177,94 @@ ui/
 └── vite.config.js
 ```
 
-## Devin Parity: ~90%
+# RadCode Deployment (VPS)
+
+## Quick Start
+
+```bash
+# 1. Clone and setup
+git clone https://github.com/ubix08/RadCod.git
+cd RadCod
+
+# 2. Create environment file
+cp deploy/env.example .env
+# Edit .env with your API keys
+
+# 3. Start (Docker)
+chmod +x start.sh
+./start.sh setup
+```
+
+## Production Deployment
+
+### Using Docker (Recommended)
+
+```bash
+# Initial setup
+cp deploy/env.example .env
+# Edit .env with your API keys
+
+# Build and start
+./start.sh setup
+
+# Or step by step
+./start.sh build
+./start.sh start
+```
+
+### Manual (Without Docker)
+
+```bash
+# Install dependencies
+./dev.sh install
+
+# Start services
+./dev.sh start
+```
+
+### Environment Variables
+
+Edit `.env`:
+
+```bash
+# Required: LLM API Key
+LLM_API_KEY=sk-ant-...
+
+# Optional
+LLM_MODEL=anthropic/claude-sonnet-4-5-20250929
+RADCODE_SECURITY=medium
+RADCODE_TIMEOUT=600
+```
+
+## Services
+
+| Service | URL |
+|---------|-----|
+| Frontend | http://localhost |
+| Backend API | http://localhost:8000 |
+| API Health | http://localhost:8000/health |
+| Admin API | http://localhost:8000/api/v1/health |
+
+## Commands
+
+```bash
+./start.sh setup    # Initial setup
+./start.sh start   # Start services
+./start.sh stop   # Stop services
+./start.sh status # Show status
+./start.sh logs   # View logs
+./start.sh reset  # Full reset
+```
+
+## Files
+
+```
+deploy/
+├── Dockerfile.backend     # Backend image
+├── Dockerfile.frontend # Frontend image
+├── docker-compose.yml  # Production compose
+├── nginx.frontend.conf # Nginx config
+└── env.example       # Environment template
+```
+
+## Devin Parity: ~92%

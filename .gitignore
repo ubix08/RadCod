@@ -1,1 +1,38 @@
 .env
+
+# Node
+node_modules/
+dist/
+.npm
+*.log
+.eslintcache
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+
+# Virtual environments  
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# Workspace
+workspaces/
+*.db
