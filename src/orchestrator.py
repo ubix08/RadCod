@@ -211,17 +211,24 @@ class RadCodeOrchestrator:
             ]
     
     def _spawn_agent(self, subtask: SubTask):
-        """Spawn an agent for a subtask."""
+        """Spawn a specialized agent for a subtask."""
         from src.coordinator import RadcodeCoordinator
+        from src.agents import get_agent_for_subtask, AgentType
+        
+        # Determine agent type based on subtask name
+        agent_type = get_agent_for_subtask(subtask.name)
+        
+        logger.info(f"Spawning {agent_type.value} agent for subtask: {subtask.name}")
         
         # Create workspace
         workspace = subtask.workspace
         os.makedirs(workspace, exist_ok=True)
         
-        # Create agent
+        # Create agent (generic coordinator with special prompts handled via agent type)
         agent = RadcodeCoordinator(
             workspace=workspace,
             security_level=self._security_level,
+            agent_type=agent_type.value,
             **self._kwargs
         )
         
