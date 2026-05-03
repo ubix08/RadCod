@@ -1,292 +1,187 @@
 """
-Radcod Coordinator - Agent Task Management.
+Radcode Coordinator - Single Agent Architecture.
 
-Manages:
-- INTERNAL TASKS: Coordinator's todo list (what to execute)
-- PROJECT: ProjectTODO.md (context + progress)
-
-Flow:
-1. receive(request)
-2. observe_analyze_evaluate(request)
-3. plan(analysis)
-4. execute(task)
-5. update ProjectTODO.md
+REFACTORED: One Agent that handles all tasks.
+Uses TaskTrackerTool for subtask management.
+Matches Devin's architecture: ONE agent that breaks tasks into subtasks.
 """
 
 import os
 import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, field
-from datetime import datetime
-
+from typing import Dict, Any
 
 logger = logging.getLogger("radcod.coordinator")
 
-# ============= INSTRUCTIONS =============
+# ============= SYSTEM PROMPT =============
 
 SYSTEM_PROMPT = """
-# Coordinator Agent
+# Radcode - Autonomous AI Software Engineer
 
-You are an autonomous AI software engineer coordinating other agents.
+You are an autonomous AI software engineer. Your role is to build complete applications from business requirements.
 
 ## Your Job
 
-1. RECEIVE user request
-2. OBSERVE - read carefully
-3. ANALYZE - what entities, integrations?
-4. EVALUATE - complexity level?
-5. PLAN - create internal task list
-6. EXECUTE - run tasks via agents
+1. **Understand the request** - Read carefully what the user wants
+2. **Plan your approach** - Use TaskTrackerTool to create subtasks
+3. **Execute** - Use TerminalTool and FileEditorTool to build
+4. **Verify** - Check your work
+5. **Iterate** - Fix any issues
 
-## Internal Task Management
+## Available Tools
 
-Maintain YOUR internal task list:
+### TaskTrackerTool
+Use to track progress:
+- Add subtasks for complex requests
+- Mark tasks complete when done
+- View pending tasks
 
-```
-My Tasks:
-- [ ] Call business_analyst → get entities
-- [ ] Call database → generate schema
-- [ ] Call coding → build app
-```
+### TerminalTool  
+Execute commands:
+- Install dependencies
+- Run servers
+- Run tests
 
-Update status as you execute.
+### FileEditorTool
+Write and edit code:
+- Create files
+- Read files
+- Edit files
 
-## ProjectTODO.md
+## Workflow
 
-Each project has ProjectTODO.md:
-- Project name, description
-- User context  
-- Progress tracking
+For "Build a CRM system":
 
-Update as project advances.
+1. Create project structure
+2. Write database models
+3. Write API endpoints
+4. Write frontend
+5. Test everything
 
-## Task Types
+Use TaskTrackerTool for every step.
 
-| Task | Agent | Description |
-|------|-------|-------------|
-| analyze | business_analyst | Identify entities |
-| schema | database | Generate database |
-| build | coding | Implement app |
-| test | browser | Test app |
-| research | deep_search | Research |
-| plan | architect | Master plan |
-| validate | validator | Validate |
+## Important
 
-## Complexity Guidelines
-
-Based on your judgment:
-- SIMPLE: 1-2 entities
-- MODERATE: 3-5 entities
-- COMPLEX: 6+ entities, integrations
-- ENTERPRISE: Full system
+- Be thorough - build complete applications
+- Test your work
+- Fix errors until it works
+- Report completion when done
 """
-
-
-# ============= TASK CLASS =============
-
-@dataclass
-class Task:
-    """Internal task in coordinator's task list."""
-    id: str
-    action: str      # What to do
-    agent: str      # Delegate to whom
-    depends_on: List[str] = field(default_factory=list)
-    status: str = "pending"  # pending/running/done/failed
-    
-    def to_markdown(self) -> str:
-        checked = "x" if self.status == "done" else " "
-        dep = f" (after: {self.depends_on})" if self.depends_on else ""
-        return f"- [{checked}] {self.action} → {self.agent}{dep}"
 
 
 # ============= COORDINATOR =============
 
-class SmartCoordinator:
+class RadcodeCoordinator:
     """
-    Coordinator with internal task management.
+    Single Agent Architecture - Matches Devin.
     
-    Two concepts:
-    - PROJECT: Business app being built (ProjectTODO.md)
-    - TASKS: Coordinator's internal list
+    ONE agent that:
+    - Receives requests
+    - Creates subtasks via TaskTrackerTool
+    - Executes via TerminalTool/FileEditorTool
     """
     
     def __init__(self, api_key: str = None, workspace: str = "./workspace"):
-        self._key = api_key or os.getenv("OPENAI_API_KEY")
+        self._key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self._workspace = Path(workspace)
         self._instructions = SYSTEM_PROMPT
-        self._tasks: List[Task] = []
-        self._next_id = 0
-        self._project: Dict[str, Any] = {}
+        
+        # SDK components - lazily initialized
+        self._llm = None
+        self._agent = None
+        self._conversation = None
+        self._initialized = False
     
-    # ----- STEP 1: RECEIVE -----
-    
-    def receive(self, request: str) -> Dict[str, Any]:
-        """Step 1: Receive request."""
-        return {
-            "status": "received",
-            "request": request,
-            "next": "Observe, analyze, evaluate"
-        }
-    
-    # ----- STEP 2-3: OBSERVE, ANALYZE, EVALUATE -----
-    
-    def observe_analyze_evaluate(self, request: str) -> Dict[str, Any]:
-        """
-        Steps 2-3: Observe, analyze, evaluate.
+    def _initialize(self):
+        """Initialize ONE SDK Agent."""
+        if self._initialized:
+            return
         
-        Coordinator analyzes request internally.
-        """
-        text = request.lower()
-        
-        # Entity estimation
-        entities = 1
-        for word in ["user", "customer", "order", "product", "inventory", 
-                   "invoice", "payment", "supplier", "employee", "category"]:
-            if word in text:
-                entities += 1
-        
-        # Complexity evaluation
-        if "enterprise" in text or "large scale" in text:
-            complexity = "enterprise"
-        elif "multi" in text or "complex" in text:
-            complexity = "complex"
-        elif entities > 3 or "system" in text:
-            complexity = "moderate"
-        else:
-            complexity = "simple"
-        
-        # Integrations check
-        integrations = []
-        if "accounting" in text: integrations.append("accounting")
-        if "payment" in text: integrations.append("payment")
-        if "crm" in text: integrations.append("crm")
-        
-        return {
-            "entities": entities,
-            "complexity": complexity,
-            "integrations": integrations,
-            "request": request
-        }
-    
-    # ----- STEP 4: PLAN -----
-    
-    def plan(self, request: str, analysis: Dict) -> List[Task]:
-        """
-        Step 4: Outline internal task list.
-        
-        Creates coordinator's internal todo list.
-        """
-        self._tasks = []
-        self._next_id = 0
-        cx = analysis["complexity"]
-        
-        # Store project info
-        self._project = {
-            "name": request.split()[2:4] if len(request.split()) > 2 else "Project",
-            "complexity": cx,
-            "started": datetime.now().isoformat()
-        }
-        
-        # Build task list based on complexity
-        if cx == "simple":
-            self._add("Call business_analyst", "business_analyst")
-            self._add("Call database", "database", after=[0])
-            self._add("Call coding", "coding", after=[1])
-        
-        elif cx == "moderate":
-            self._add("Call business_analyst", "business_analyst")
-            self._add("Call database", "database", after=[0])
-            self._add("Call coding", "coding", after=[1])
-            self._add("Call validator", "validator", after=[0])
-        
-        elif cx == "complex":
-            self._add("Call deep_search", "deep_search")
-            self._add("Call business_analyst", "business_analyst", after=[0])
-            self._add("Call architect", "architect", after=[1])
-            self._add("Call database", "database", after=[2])
-            self._add("Call coding", "coding", after=[3])
-        
-        else:  # enterprise
-            self._add("Call deep_search", "deep_search")
-            self._add("Call business_analyst", "business_analyst", after=[0])
-            self._add("Call architect", "architect", after=[1])
-            self._add("Call database", "database", after=[2])
-            self._add("Call coding", "coding", after=[3])
-            self._add("Call browser", "browser", after=[4])
-        
-        return self._tasks
-    
-    def _add(self, action: str, agent: str, after: List[int] = None):
-        """Add internal task."""
-        deps = [f"task_{i}" for i in (after or [])]
-        task = Task(f"task_{self._next_id}", action, agent, deps)
-        self._tasks.append(task)
-        self._next_id += 1
-    
-    def get_task_list(self) -> str:
-        """Get internal task list as markdown."""
-        lines = ["## My Tasks", ""]
-        for task in self._tasks:
-            lines.append(task.to_markdown())
-        return "\n".join(lines)
-    
-    # ----- STEP 5: EXECUTE -----
-    
-    def execute(self, task_id: str) -> Dict[str, Any]:
-        """Step 5: Execute a task via agent."""
-        task = next((t for t in self._tasks if t.id == task_id), None)
-        if not task:
-            return {"error": f"Task {task_id} not found"}
-        
-        # Would call actual agent here
-        task.status = "running"
-        
-        return {
-            "status": "executed",
-            "task": task_id,
-            "action": task.action,
-            "agent": task.agent
-        }
-    
-    def get_ready_tasks(self) -> List[Task]:
-        """Get tasks where dependencies are satisfied."""
-        ready = []
-        for task in self._tasks:
-            if task.status != "pending":
-                continue
-            deps_done = all(
-                any(t.id == dep and t.status == "done" for t in self._tasks)
-                for dep in task.depends_on
+        try:
+            from openhands.sdk import LLM, Agent, Conversation, Tool
+            from openhands.tools.file_editor import FileEditorTool
+            from openhands.tools.terminal import TerminalTool
+            from openhands.tools.task_tracker import TaskTrackerTool
+            
+            # ONE LLM instance
+            self._llm = LLM(
+                model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+                api_key=self._key,
+                base_url=os.getenv("LLM_BASE_URL")
             )
-            if deps_done:
-                ready.append(task)
-        return ready
+            
+            # ONE Agent with all tools
+            self._agent = Agent(
+                llm=self._llm,
+                tools=[
+                    Tool(name=TaskTrackerTool.name),
+                    Tool(name=FileEditorTool.name),
+                    Tool(name=TerminalTool.name),
+                ],
+                system_prompt=self._instructions
+            )
+            
+            # ONE Conversation
+            self._conversation = Conversation(
+                agent=self._agent,
+                workspace=str(self._workspace)
+            )
+            
+            self._initialized = True
+            logger.info("RadcodeCoordinator initialized (Single Agent)")
+            
+        except ImportError as e:
+            logger.error(f"OpenHands SDK not installed: {e}")
+            raise RuntimeError("openhands-sdk required. Install: pip install openhands-sdk openhands-tools")
     
-    # ----- PROJECTTODO -----
+    @property
+    def agent(self) -> Any:
+        """Get the SDK Agent."""
+        self._initialize()
+        return self._agent
     
-    def get_project_context(self) -> Dict[str, Any]:
-        """Get project context."""
-        return self._project
+    @property
+    def conversation(self) -> Any:
+        """Get the SDK Conversation."""
+        self._initialize()
+        return self._conversation
     
-    def update_project_progress(self, task_name: str):
-        """Update project progress."""
-        # Would update ProjectTODO.md
-        pass
+    def run(self, request: str) -> Dict[str, Any]:
+        """
+        Execute request using ONE Agent.
+        
+        The Agent handles:
+        - Planning via TaskTrackerTool
+        - Execution via TerminalTool/FileEditorTool
+        """
+        self._initialize()
+        
+        self._conversation.send_message(request)
+        
+        try:
+            result = self._conversation.run()
+            return {
+                "status": "success",
+                "result": result,
+                "request": request
+            }
+        except Exception as e:
+            logger.error(f"Execution failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "request": request
+            }
     
-    def get_instructions(self) -> str:
-        """Get system prompt."""
-        return self._instructions
-
-
-
-# Available agents
-AGENTS = {
-    "business_analyst": "src.agents.business_analyst.BusinessAnalystAgent",
-    "database": "src.agents.database_agent.DatabaseAgent", 
-    "coding": "src.integrations.coding_agent.wrapper.CodingAgentWrapper",
-    "deep_search": "src.agents.deep_search.DeepSearchAgent",
-    "architect": "src.agents.architect_agent.ArchitectAgent",
-    "browser": "src.agents.browser_agent.BrowserAgent",
-    "validator": "src.agents.validator_agent.ValidatorAgent",
-}
+    # Backward compatibility
+    def process_request(self, request: str) -> Dict[str, Any]:
+        """Alias for run()."""
+        return self.run(request)
+    
+    def analyze_only(self, request: str) -> Dict[str, Any]:
+        """Legacy - just returns request info."""
+        return {"request": request}
+    
+    def analyze(self, request: str) -> Dict[str, Any]:
+        """Legacy - just returns request info."""
+        return {"request": request}
