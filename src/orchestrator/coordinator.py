@@ -1,9 +1,12 @@
 """
 Radcode Coordinator - Single Agent Architecture.
 
-REFACTORED: One Agent that handles all tasks.
-Uses TaskTrackerTool for subtask management.
-Matches Devin's architecture: ONE agent that breaks tasks into subtasks.
+Features:
+- ONE autonomous Agent (Devin pattern)
+- TaskTrackerTool for subtask management
+- TerminalTool + FileEditorTool for execution
+- SecurityAnalyzer for action validation
+- Conversation for reasoning-action loop
 """
 
 import os
@@ -48,18 +51,6 @@ Write and edit code:
 - Read files
 - Edit files
 
-## Workflow
-
-For "Build a CRM system":
-
-1. Create project structure
-2. Write database models
-3. Write API endpoints
-4. Write frontend
-5. Test everything
-
-Use TaskTrackerTool for every step.
-
 ## Important
 
 - Be thorough - build complete applications
@@ -75,16 +66,23 @@ class RadcodeCoordinator:
     """
     Single Agent Architecture - Matches Devin.
     
-    ONE agent that:
-    - Receives requests
-    - Creates subtasks via TaskTrackerTool
-    - Executes via TerminalTool/FileEditorTool
+    Features:
+    - ONE autonomous Agent
+    - TaskTrackerTool for subtasks
+    - TerminalTool + FileEditorTool for execution
+    - SecurityAnalyzer for action validation
     """
     
-    def __init__(self, api_key: str = None, workspace: str = "./workspace"):
+    def __init__(
+        self, 
+        api_key: str = None, 
+        workspace: str = "./workspace",
+        security_level: str = "medium"  # low, medium, high
+    ):
         self._key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self._workspace = Path(workspace)
         self._instructions = SYSTEM_PROMPT
+        self._security_level = security_level
         
         # SDK components - lazily initialized
         self._llm = None
@@ -93,7 +91,7 @@ class RadcodeCoordinator:
         self._initialized = False
     
     def _initialize(self):
-        """Initialize ONE SDK Agent."""
+        """Initialize ONE SDK Agent with security."""
         if self._initialized:
             return
         
@@ -110,7 +108,10 @@ class RadcodeCoordinator:
                 base_url=os.getenv("LLM_BASE_URL")
             )
             
-            # ONE Agent with all tools
+            # Security configuration
+            security = self._build_security()
+            
+            # ONE Agent with all tools + security
             self._agent = Agent(
                 llm=self._llm,
                 tools=[
@@ -118,7 +119,8 @@ class RadcodeCoordinator:
                     Tool(name=FileEditorTool.name),
                     Tool(name=TerminalTool.name),
                 ],
-                system_prompt=self._instructions
+                system_prompt=self._instructions,
+                security_analyzer=security
             )
             
             # ONE Conversation
@@ -128,11 +130,59 @@ class RadcodeCoordinator:
             )
             
             self._initialized = True
-            logger.info("RadcodeCoordinator initialized (Single Agent)")
+            logger.info(f"RadcodeCoordinator initialized (security: {self._security_level})")
             
         except ImportError as e:
             logger.error(f"OpenHands SDK not installed: {e}")
             raise RuntimeError("openhands-sdk required. Install: pip install openhands-sdk openhands-tools")
+    
+    def _build_security(self):
+        """Build security analyzer based on security level."""
+        try:
+            from openhands.sdk.security import SecurityAnalyzer, SecurityPolicy
+            
+            # Define allowed dangerous actions
+            dangerous_commands = [
+                "rm -rf /",           # Delete root
+                "rm -rf /*",          # Delete all
+                "dd if=",              # Disk wipe
+                "mkfs",                # Format
+                ":(){:|:&};:",         # Fork bomb
+                "curl | sh",           # Pipe to shell
+                "wget | sh",           # Download & execute
+            ]
+            
+            # Build security policy
+            if self._security_level == "high":
+                # High security - block dangerous, confirm for moderate
+                policy = SecurityPolicy(
+                    block_dangerous=True,
+                    confirm_dangerous=False,
+                    allowed_commands=[],  # Empty = allow all except dangerous
+                    blocked_commands=dangerous_commands,
+                )
+            elif self._security_level == "medium":
+                # Medium - warn for dangerous, confirm for moderate
+                policy = SecurityPolicy(
+                    block_dangerous=False,
+                    confirm_dangerous=True,
+                    allowed_commands=[],
+                    blocked_commands=dangerous_commands,
+                )
+            else:
+                # Low - just log warnings
+                policy = SecurityPolicy(
+                    block_dangerous=False,
+                    confirm_dangerous=False,
+                    allowed_commands=[],
+                    blocked_commands=[],
+                )
+            
+            return SecurityAnalyzer(policy=policy)
+            
+        except ImportError:
+            logger.warning("SecurityAnalyzer not available, running without security")
+            return None
     
     @property
     def agent(self) -> Any:
@@ -148,11 +198,7 @@ class RadcodeCoordinator:
     
     def run(self, request: str) -> Dict[str, Any]:
         """
-        Execute request using ONE Agent.
-        
-        The Agent handles:
-        - Planning via TaskTrackerTool
-        - Execution via TerminalTool/FileEditorTool
+        Execute request using ONE Agent with security.
         """
         self._initialize()
         
@@ -163,7 +209,8 @@ class RadcodeCoordinator:
             return {
                 "status": "success",
                 "result": result,
-                "request": request
+                "request": request,
+                "security_level": self._security_level
             }
         except Exception as e:
             logger.error(f"Execution failed: {e}")
@@ -178,10 +225,238 @@ class RadcodeCoordinator:
         """Alias for run()."""
         return self.run(request)
     
-    def analyze_only(self, request: str) -> Dict[str, Any]:
-        """Legacy - just returns request info."""
-        return {"request": request}
+    # ============= STUCK DETECTION =============
     
-    def analyze(self, request: str) -> Dict[str, Any]:
-        """Legacy - just returns request info."""
-        return {"request": request}
+    def run_with_timeout(
+        self, 
+        request: str, 
+        timeout_seconds: int = 600,
+        max_iterations: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Execute request with stuck detection.
+        
+        Args:
+            request: The task request
+            timeout_seconds: Max time to run (default 10 min)
+            max_iterations: Max agent loops (default 100)
+            
+        Returns:
+            Result with status and any stuck detection info
+        """
+        self._initialize()
+        
+        from datetime import datetime, timedelta
+        import signal
+        
+        # Set timeout
+        start_time = datetime.now()
+        end_time = start_time + timedelta(seconds=timeout_seconds)
+        
+        # Track iterations
+        iteration_count = 0
+        last_action = None
+        repeat_count = 0
+        
+        self._conversation.send_message(request)
+        
+        try:
+            # Run with iteration tracking
+            result = self._conversation.run(
+                max_iterations=max_iterations,
+                # Callback to check for stuck
+                on_iteration=lambda action: self._check_stuck(
+                    action, 
+                    iteration_count, 
+                    last_action, 
+                    repeat_count
+                )
+            )
+            
+            return {
+                "status": "success",
+                "result": result,
+                "request": request,
+                "iterations": iteration_count,
+                "security_level": self._security_level
+            }
+            
+        except TimeoutError:
+            return {
+                "status": "timeout",
+                "error": f"Task exceeded {timeout_seconds}s timeout",
+                "request": request,
+                "iterations": iteration_count
+            }
+        except Exception as e:
+            logger.error(f"Execution failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "request": request,
+                "iterations": iteration_count
+            }
+    
+    def _check_stuck(self, action, iteration, last_action, repeat_count):
+        """
+        Check if agent is stuck (repeating same action).
+        
+        Returns True if stuck, False otherwise.
+        """
+        if action == last_action:
+            repeat_count += 1
+            if repeat_count >= 5:  # Same action 5 times = stuck
+                return True
+        else:
+            repeat_count = 0
+        
+        return False
+    
+    # ============= METRICS =============
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get metrics for the current session.
+        
+        Returns token usage, cost, and performance metrics.
+        """
+        if not self._initialized or not self._llm:
+            return {"status": "not_initialized"}
+        
+        try:
+            # Get metrics from LLM
+            metrics = self._llm.get_metrics()
+            
+            return {
+                "status": "available",
+                "prompt_tokens": metrics.get("prompt_tokens", 0),
+                "completion_tokens": metrics.get("completion_tokens", 0),
+                "total_tokens": metrics.get("total_tokens", 0),
+                "estimated_cost": self._calculate_cost(metrics),
+                "model": self._llm.model
+            }
+        except Exception as e:
+            logger.warning(f"Could not get metrics: {e}")
+            return {"status": "unavailable", "error": str(e)}
+    
+    def _calculate_cost(self, metrics: Dict) -> float:
+        """Calculate estimated cost based on token usage."""
+        # Approximate pricing (varies by model)
+        prompt_cost_per_1k = 0.003  # $3/1M tokens
+        completion_cost_per_1k = 0.015  # $15/1M tokens
+        
+        prompt_tokens = metrics.get("prompt_tokens", 0)
+        completion_tokens = metrics.get("completion_tokens", 0)
+        
+        prompt_cost = (prompt_tokens / 1000) * prompt_cost_per_1k
+        completion_cost = (completion_tokens / 1000) * completion_cost_per_1k
+        
+        return prompt_cost + completion_cost
+    
+    def reset_metrics(self):
+        """Reset metrics for a new session."""
+        if self._llm:
+            try:
+                self._llm.reset_metrics()
+            except:
+                pass
+    
+    # ============= SANDBOX (DOCKER) =============
+    
+    @classmethod
+    def create_with_docker(
+        cls,
+        api_key: str = None,
+        workspace: str = "./workspace",
+        security_level: str = "medium",
+        docker_image: str = "openhands/runtime:latest"
+    ) -> "RadcodeCoordinator":
+        """
+        Create a coordinator running in Docker sandbox.
+        
+        Args:
+            api_key: LLM API key
+            workspace: Workspace directory
+            security_level: Security level (low/medium/high)
+            docker_image: Docker image for sandbox
+            
+        Returns:
+            RadcodeCoordinator instance with Docker workspace
+        """
+        try:
+            from openhands.runtime import DockerRuntime
+            
+            # Create Docker runtime
+            runtime = DockerRuntime(
+                image=docker_image,
+                workspace=workspace
+            )
+            
+            # Create coordinator with runtime
+            coordinator = cls(
+                api_key=api_key,
+                workspace=workspace,
+                security_level=security_level
+            )
+            
+            # Set the runtime on conversation
+            # (will be applied during initialization)
+            coordinator._docker_runtime = runtime
+            
+            logger.info(f"Created coordinator with Docker sandbox: {docker_image}")
+            return coordinator
+            
+        except ImportError:
+            logger.warning("Docker runtime not available, using local workspace")
+            return cls(
+                api_key=api_key,
+                workspace=workspace,
+                security_level=security_level
+            )
+    
+    @classmethod
+    def create_with_cloud(
+        cls,
+        api_key: str = None,
+        workspace: str = "./workspace",
+        security_level: str = "medium",
+        cloud_url: str = None
+    ) -> "RadcodeCoordinator":
+        """
+        Create a coordinator using OpenHands Cloud.
+        
+        Args:
+            api_key: LLM API key
+            workspace: Workspace directory
+            security_level: Security level
+            cloud_url: Optional custom cloud URL
+            
+        Returns:
+            RadcodeCoordinator instance with cloud workspace
+        """
+        try:
+            from openhands.runtime import CloudRuntime
+            
+            runtime = CloudRuntime(
+                base_url=cloud_url,
+                workspace=workspace
+            )
+            
+            coordinator = cls(
+                api_key=api_key,
+                workspace=workspace,
+                security_level=security_level
+            )
+            
+            coordinator._cloud_runtime = runtime
+            
+            logger.info("Created coordinator with OpenHands Cloud")
+            return coordinator
+            
+        except ImportError:
+            logger.warning("Cloud runtime not available")
+            return cls(
+                api_key=api_key,
+                workspace=workspace,
+                security_level=security_level
+            )

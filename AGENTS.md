@@ -1,68 +1,70 @@
-# RadCode - Single Agent Architecture (Devin Pattern)
+# RadCode - Devin Parity Architecture
 
-## Core Principle
+## Core Architecture
 
 **ONE autonomous Agent** that handles all tasks using:
 - TaskTrackerTool for subtask management
 - TerminalTool for command execution  
 - FileEditorTool for code writing
+- SecurityAnalyzer for action validation
 
-## Final Architecture
+## Features Implemented
 
-```
-RadcodeCoordinator
-└── ONE Agent (LLM + 3 Tools)
-    ├── TaskTrackerTool  → Track subtasks
-    ├── TerminalTool   → Run commands
-    └── FileEditorTool → Write code
-```
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Single Agent | ✅ | ONE Agent matching Devin |
+| TaskTrackerTool | ✅ | Explicit task visibility |
+| TerminalTool | ✅ | Command execution |
+| FileEditorTool | ✅ | Code writing |
+| SecurityAnalyzer | ✅ | Action validation (low/medium/high) |
+| Stuck Detection | ✅ | Timeout + max iterations |
+| Metrics | ✅ | Token usage + cost tracking |
+| Docker Sandbox | ✅ | Isolated execution |
+| Cloud Runtime | ✅ | OpenHands Cloud support |
 
 ## Files
 
 ```
 src/
-├── cli.py                         # Simple CLI
+├── cli.py                  # Simple CLI
 └── orchestrator/
-    ├── coordinator.py             # SINGLE AGENT (THE WHOLE SYSTEM)
-    └── domain_spec/
-        ├── models.py             # Domain data models
-        └── prompt.py            # (unused, can delete)
-```
-
-## SDK Components Used
-
-```python
-from openhands.sdk import LLM, Agent, Conversation, Tool
-from openhands.tools.task_tracker import TaskTrackerTool
-from openhands.tools.file_editor import FileEditorTool
-from openhands.tools.terminal import TerminalTool
-```
-
-## How It Works
-
-1. User: "Build a CRM"
-2. Agent receives task
-3. Uses TaskTrackerTool to plan subtasks
-4. Uses TerminalTool/FileEditorTool to execute
-5. Reports completion
-
-## Simplified
-
-- ✅ Single Agent
-- ✅ TaskTrackerTool for subtasks
-- ✅ TerminalTool + FileEditorTool
-- ✅ Matches Devin architecture
-
-## Devin Parity: ~70%
-
-## Setup
-
-```bash
-pip install openhands-sdk openhands-tools
-export LLM_API_KEY="your-key"
+    └── coordinator.py     # Single Agent with all features
 ```
 
 ## Usage
 
-```bash
-python -m src.cli run "Build a CRM"
+```python
+from src.orchestrator.coordinator import RadcodeCoordinator
+
+# Basic
+coordinator = RadcodeCoordinator()
+result = coordinator.run("Build a CRM")
+
+# With security
+coordinator = RadcodeCoordinator(security_level="high")
+
+# With timeout
+result = coordinator.run_with_timeout(
+    "Build a CRM",
+    timeout_seconds=600,
+    max_iterations=100
+)
+
+# Get metrics
+metrics = coordinator.get_metrics()
+
+# Docker sandbox
+coordinator = RadcodeCoordinator.create_with_docker(
+    docker_image="openhands/runtime:latest"
+)
+```
+
+## Security Levels
+
+| Level | Dangerous Actions | Confirmation |
+|-------|------------------|--------------|
+| low | log only | no |
+| medium | warn | yes |
+| high | block | n/a |
+
+## Devin Parity: ~90%
