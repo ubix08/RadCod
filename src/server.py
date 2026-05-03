@@ -30,6 +30,33 @@ except ImportError:
     pass
 
 
+def sanitize_workspace_path(path: str) -> str:
+    """Sanitize workspace path to prevent directory traversal."""
+    import os
+    
+    # Resolve to absolute path
+    abs_path = os.path.abspath(os.path.expanduser(path))
+    
+    # Get allowed base directories
+    base_dirs = [
+        os.getcwd(),
+        os.path.expanduser("~/"),
+        "./workspace",
+        "/workspace",
+    ]
+    
+    # Check if path is within allowed directories
+    for base in base_dirs:
+        if abs_path.startswith(os.path.abspath(base)):
+            return abs_path
+    
+    # Default to ./workspace if invalid
+    default = os.path.abspath("./workspace")
+    os.makedirs(default, exist_ok=True)
+    logger.warning(f"Invalid workspace path: {path}, using {default}")
+    return default
+
+
 # ============= REQUEST/RESPONSE MODELS =============
 
 
@@ -37,8 +64,8 @@ class RunRequest(BaseModel):
     """Request to run a task."""
     request: str = Field(..., description="Task request or prompt")
     workspace: str = Field(default="./workspace", description="Working directory")
-    security_level: str = Field(default="medium", description="Security level")
-    timeout_seconds: int = Field(default=600, description="Max execution time")
+    security_level: str = Field(default="medium", description="Security level", pattern="^(low|medium|high)$")
+    timeout_seconds: int = Field(default=600, description="Max execution time", ge=60, le=3600)
     model: Optional[str] = Field(default=None, description="LLM model override")
 
 
@@ -170,7 +197,9 @@ async def run_task(req: RunRequest, background_tasks: BackgroundTasks):
     def execute_task():
         """Background task execution."""
         try:
-            coord = get_coordinator(req.workspace)
+            # Sanitize workspace path
+            safe_workspace = sanitize_workspace_path(req.workspace)
+            coord = get_coordinator(safe_workspace)
             
             # Set security level
             coord._security_level = req.security_level

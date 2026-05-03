@@ -254,31 +254,38 @@ class RadcodeCoordinator:
             from openhands.tools.browser_use import BrowserToolSet
             
             # ONE LLM instance
-            # Default model (uses LLM_MODEL env or SDK default)
-            # For free models:
-            #   - LLM_MODEL=groq/llama-3.1-70b-instruct + GROQ_API_KEY
-            #   - LLM_MODEL=gemini-2.0-flash-exp + GEMINI_API_KEY (Google AI)
+            # Model providers mapping - simple key->(prefix, env_key) lookup
+            PROVIDERS = {
+                "groq": ("groq/", "GROQ_API_KEY"),
+                "google": ("google/", "GEMINI_API_KEY"),
+                "google-generative-ai": ("google/", "GEMINI_API_KEY"),
+                "glm": ("/", "ZAI_API_KEY"),  # ZAI uses model itself as key
+                "nvidia": ("nvidia/", "NVIDIA_API_KEY"),
+                "openrouter": ("openrouter/", "OPENROUTER_API_KEY"),
+                "anthropic": ("anthropic/", "ANTHROPIC_API_KEY"),
+                "openai": ("openai/", "OPENAI_API_KEY"),
+            }
+            
             raw_model = os.getenv("LLM_MODEL", "groq/llama-3.1-70b-instruct")
             
-            # Add provider prefix if not present
-            if "/" in raw_model:
-                model = raw_model
-            else:
-                model = f"groq/{raw_model}" if "llama" in raw_model.lower() else raw_model
+            # Determine provider and API key
+            provider = None
+            api_key = None
             
-            # Get API key based on model name
-            if model.startswith("groq/"):
-                api_key = os.getenv("GROQ_API_KEY")
-            elif model.startswith("google/"):
-                api_key = os.getenv("GEMINI_API_KEY")
-            elif model.startswith("google-generative-ai"):
-                api_key = os.getenv("GEMINI_API_KEY")
-            elif "glm" in model.lower():
-                api_key = os.getenv("ZAI_API_KEY")
-            elif model.startswith("nvidia/"):
-                api_key = os.getenv("NVIDIA_API_KEY")
-            else:
+            for key, (prefix, env_var) in PROVIDERS.items():
+                if key in raw_model.lower():
+                    provider = prefix
+                    api_key = os.getenv(env_var)
+                    break
+            
+            # Default: use as-is if no known provider
+            if provider is None:
+                model = raw_model
                 api_key = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
+            elif "/" not in raw_model:
+                model = f"{provider.rstrip('/')}/{raw_model}"
+            else:
+                model = raw_model
             
             self._llm = LLM(
                 model=model,
@@ -349,6 +356,30 @@ class RadcodeCoordinator:
         self._initialize()
         return self._conversation
     
+    # ============= AUTO SKILL LOADING =============
+    
+    # Skills to load based on keywords in request
+    SKILL_TRIGGERS = {
+        "frontend": ["ui", "frontend", "react", "vue", "web", "css", "html", "component", "page"],
+        "backend": ["api", "backend", "server", "database", "sql", "fastapi", "express"],
+        "code-review": ["review", "pr", "merge", "pull request"],
+        "security": ["security", "auth", "oauth", "password", " encryption"],
+        "docker": ["docker", "container", "kubernetes", "k8s", "deploy"],
+        "database": ["database", "db", "postgres", "mysql", "mongodb", "sql"],
+    }
+    
+    @classmethod
+    def get_skills_for_request(cls, request: str) -> list:
+        """ Determine which skills are relevant for a request based on keywords."""
+        request_lower = request.lower()
+        skills = []
+        
+        for skill_name, keywords in cls.SKILL_TRIGGERS.items():
+            if any(kw in request_lower for kw in keywords):
+                skills.append(skill_name)
+        
+        return skills
+    
     def run(self, request: str, progress_callback=None) -> Dict[str, Any]:
         """
         Execute request using ONE Agent with security.
@@ -361,6 +392,12 @@ class RadcodeCoordinator:
         Includes automatic context condensation for long tasks.
         """
         self._initialize()
+        
+        # Detect relevant skills for this request
+        detected_skills = self.get_skills_for_request(request)
+        if detected_skills:
+            logger.info(f"Detected skills for request: {detected_skills}")
+            # Skills can be loaded via openhands.sdk.load_skills_from_dir() if needed
         
         # Check context before running
         if not self.can_continue():
