@@ -17,119 +17,36 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger("radcod.coordinator")
 
 # ============= SYSTEM PROMPT =============
+# Simplified: SDK tools have built-in instructions via their descriptions.
+# This prompt adds domain expertise only.
 
 SYSTEM_PROMPT = """
 # RadCode - Autonomous AI Software Engineer
 
-You are an expert autonomous AI software engineer. Your mission is to deliver working solutions, not just code snippets.
+You are an autonomous software engineer. Your mission is to deliver working solutions.
 
-## Your Core Workflow
+## Core Workflow
+1. Understand the task
+2. Plan using TaskTrackerTool (optional)
+3. Build incrementally
+4. Test and verify
+5. Iterate until working
+6. Report completion
 
-1. **Understand** - Read carefully what the user wants. Ask clarifying questions if needed.
-2. **Plan** - Create a todo list with TaskTrackerTool. Break complex tasks into subtasks.
-3. **Execute** - Build incrementally. Test each piece.
-4. **Verify** - Run tests, check that code works.
-5. **Iterate** - Fix errors until it works.
-6. **Deliver** - Report completion with what was built.
+## Preferred Patterns
 
-## Task Complexity Assessment
+**Python**: Use `uv` for dependency management:
+- `uv add <package>` - Add dependency
+- `uv run pytest` - Run tests
 
-**Simple tasks** (< 30 min, single file):
-- Handle directly using tools
+**Backend**: FastAPI for REST APIs, prefer async
 
-**Complex tasks** (require multiple components):
-- Use TaskToolSet to delegate to sub-agents
-- Break into: backend, frontend, tests, deployment
+**Frontend**: React + Vite, or plain HTML/JS for simple projects
 
-## Tool Selection Strategy
-
-| Task | Tool(s) |
-|------|--------|
-| Create/update files | TaskTrackerTool + FileEditorTool |
-| Run commands (install, test, serve) | TaskTrackerTool + TerminalTool |
-| Find code patterns | GlobTool + GrepTool |
-| Web research/browse | BrowserToolSet |
-| Delegate complex work | TaskToolSet |
-
-## Python Project Patterns
-
-**Use uv for dependency management** (preferred):
-```bash
-uv add <package>           # Add dependency
-uv remove <package>       # Remove dependency  
-uv sync                  # Sync environment
-uv run pytest           # Run tests
-```
-
-**Project initialization**:
-```bash
-uv init                  # Initialize project
-uv venv                 # Create virtual environment
-```
-
-## Testing Requirements
-
-**Always write tests** for new features:
-- Unit tests: place in `tests/` or `tests/unit/`
-- Integration tests: place in `tests/integration/`
-- Run with: `uv run pytest` or `pytest`
-
-**Test structure**:
-```python
-def test_<feature>():
-    # Arrange
-    ...
-    # Act
-    ...
-    # Assert
-    ...
-```
+**Testing**: Always test your code
 
 ## Error Handling
-
-When errors occur:
-1. Read the error message carefully
-2. Identify the root cause (not symptom)
-3. Find relevant code
-4. Fix the cause
-5. Re-run to verify
-
-**Never**:
-- Ignore tests
-- Ship broken code
-- Skip error messages
-
-## Building Complete Applications
-
-For full-stack applications:
-
-**Backend** (choose based on requirements):
-- REST API: FastAPI (preferred for Python)
-- GraphQL: Strawberry GraphQL
-- Database: PostgreSQL with async SQLAlchemy 2.0
-
-**Frontend** (choose based on requirements):
-- React + Vite (preferred)
-- Simple: HTML + vanilla JS
-- Mobile-first: React + TailwindCSS
-
-**DevOps**:
-- Docker: Create Dockerfile + docker-compose.yml
-- Deploy: Vercel, Render, or Fly.io
-
-## Quality Standards
-
-- [ ] Code passes `ruff check .` and `ruff format .`
-- [ ] Tests pass with `pytest`
-- [ ] Dependencies documented in pyproject.toml
-- [ ] README with setup instructions
-
-## When Stuck
-
-If you're repeating the same action 3+ times without progress:
-- Step back and think of a different approach
-- Use BrowserToolSet to search for solutions
-- Ask for clarification from user
+When errors occur: read carefully, find root cause, fix, re-test.
 """
 
 
@@ -189,11 +106,13 @@ class RadcodeCoordinator:
         self, 
         api_key: str = None, 
         workspace: str = "./workspace",
-        security_level: str = "medium"
+        security_level: str = "medium",
+        extra_instructions: str = ""
     ):
         self._key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self._workspace = Path(workspace)
-        self._instructions = SYSTEM_PROMPT + SKILLS_PROMPT  # Include loaded skills
+        # Combine base instructions with specialized domain instructions (if provided)
+        self._instructions = SYSTEM_PROMPT + SKILLS_PROMPT + extra_instructions
         self._security_level = security_level
         
         # SDK components
@@ -208,44 +127,72 @@ class RadcodeCoordinator:
             return
         
         try:
-            from openhands.sdk import LLM, Agent, Conversation
-            from openhands.tools.preset import get_default_agent
+            # Check for NVIDIA
+            raw_model = os.getenv("LLM_MODEL", "meta/llama-3.1-70b-instruct")
+            api_base = os.getenv("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
             
-            # LLM setup
-            PROVIDERS = {
-                "groq": ("GROQ_API_KEY", "groq/"),
-                "google": ("GEMINI_API_KEY", "google/"),
-                "anthropic": ("ANTHROPIC_API_KEY", "anthropic/"),
-                "openai": ("OPENAI_API_KEY", "openai/"),
-            }
+            # NVIDIA if model OR URL contains nvidia
+            is_nvidia = "nvidia" in raw_model.lower() or "nvidia.com" in api_base
             
-            raw_model = os.getenv("LLM_MODEL", "groq/llama-3.1-70b-instruct")
+            # Apply litellm patch BEFORE importing SDK
+            if is_nvidia:
+                from src.litellm_patch import patch_litellm
+                patch_litellm()
+                logger.info("Applied litellm patch for NVIDIA")
             
-            # Find provider
-            provider, api_key = "GROQ_API_KEY", os.getenv("GROQ_API_KEY")
-            for key, (env_var, prefix) in PROVIDERS.items():
-                if key in raw_model.lower():
-                    provider, api_key = env_var, os.getenv(env_var)
-                    break
+            # Import SDK
+            from openhands.sdk import LLM
+            from openhands.tools.preset.default import get_default_agent
+            from openhands.sdk import Conversation
             
-            model = raw_model if "/" in raw_model else f"{provider.rstrip('_API_KEY').rstrip('_')}/{raw_model}"
-            
-            self._llm = LLM(model=model, api_key=api_key)
+            # Create LLM based on provider
+            if is_nvidia:
+                # Use model as-is for vendor-prefixed models (minimaxai/*, z-ai/*)
+                # Add meta/ prefix only for bare llama models
+                model = raw_model
+                if not model.startswith("meta/") and "/" not in model and (model.startswith("llama-") or "llama" in model.lower()):
+                    model = f"meta/{model}"
+                
+                api_key = os.environ.get('NVIDIA_API_KEY') or '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'
+                base_url = os.getenv("NVIDIA_API_BASE", "https://integrate.api.nvidia.com/v1")
+                
+                self._llm = LLM(model=model, api_key=api_key, api_base=base_url)
+                logger.info(f"Using SDK LLM: {model}")
+            else:
+                # Use SDK LLM for other providers
+                PROVIDERS = {
+                    "groq": "GROQ_API_KEY",
+                    "google": "GEMINI_API_KEY", 
+                    "anthropic": "ANTHROPIC_API_KEY",
+                    "openai": "OPENAI_API_KEY",
+                    "ollama": "OLLAMA_API_KEY",
+                }
+                
+                api_key = None
+                for key, env_var in PROVIDERS.items():
+                    if key in raw_model.lower():
+                        api_key = os.getenv(env_var)
+                        break
+                
+                model = raw_model.split("/")[-1] if "/" in raw_model else raw_model
+                self._llm = LLM(model=model, api_key=api_key)
+                logger.info(f"Using SDK LLM: {model}")
             
             # Use SDK default agent (includes tools + condenser)
             self._agent = get_default_agent(self._llm)
             
-            # Override system prompt with our custom instructions
-            self._agent._system_prompt = self._instructions
+            # Add custom instructions (optional)
+            if self._instructions:
+                self._agent._system_prompt = self._instructions
             
-            # Create conversation (agent has built-in condenser)
+            # Create conversation (with built-in condenser)
             self._conversation = Conversation(
                 agent=self._agent,
                 workspace=str(self._workspace)
             )
             
             self._initialized = True
-            logger.info("RadcodeCoordinator initialized")
+            logger.info("RadcodeCoordinator initialized with SDK tools")
             
         except ImportError as e:
             logger.error(f"OpenHands SDK not installed: {e}")
@@ -277,8 +224,40 @@ class RadcodeCoordinator:
     
     def run_with_timeout(self, request: str, timeout_seconds: int = 600) -> Dict[str, Any]:
         """Run with timeout."""
-        from datetime import timedelta
-        return self.run(request)
+        import signal
+        import threading
+        
+        result_container = {}
+        error_container = [None]
+        
+        def run_with_result():
+            """Run in thread and store result."""
+            try:
+                result_container['result'] = self.run(request)
+            except Exception as e:
+                error_container[0] = str(e)
+        
+        # Run in thread to allow timeout interruption
+        thread = threading.Thread(target=run_with_result, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout_seconds)
+        
+        if thread.is_alive():
+            # Timeout occurred
+            return {
+                "status": "timeout",
+                "error": f"Task timed out after {timeout_seconds} seconds",
+                "request": request,
+                "timeout_seconds": timeout_seconds,
+            }
+        elif error_container[0]:
+            return {
+                "status": "error",
+                "error": error_container[0],
+                "request": request,
+            }
+        else:
+            return result_container.get('result', {"status": "unknown"})
 
 
 # ============= CONVENIENCE FUNCTION ============
