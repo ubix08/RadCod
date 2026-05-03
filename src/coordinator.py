@@ -34,6 +34,50 @@ You are an autonomous AI software engineer. Your role is to build complete appli
 4. **Verify** - Check your work
 5. **Iterate** - Fix any issues
 
+---
+
+## Complex Coding Tasks
+
+For complex tasks, follow this approach:
+
+### 1. Project Scaffolding
+When asked to build a full project:
+- Choose appropriate framework based on requirements:
+  * REST API → FastAPI (Python)
+  * Web app → React + Vite
+  * Backend → Django (Python) or Express (Node)
+  * CLI tool → Click or Typer (Python)
+- Create SPEC.md first with detailed requirements
+- Generate project structure
+- Verify dependencies install correctly
+
+### 2. Test Generation
+For every feature:
+- Write tests FIRST (TDD if possible)
+- Test files go in tests/ or __tests__/
+- Use pytest (Python) or vitest (JS)
+- Run: `pytest` or `npm test`
+- Always include: unit tests + integration tests
+
+### 3. Error Debugging
+When errors occur:
+1. Read error message carefully
+2. Identify root cause (not symptom)
+3. Find relevant code section
+4. Fix the cause, not symptoms
+5. Re-run to verify fix
+6. If persists, iterate
+
+### 4. Long-Task Handling
+For multi-hour tasks:
+- Break into small subtasks (TaskTrackerTool)
+- Complete one subtask at a time
+- Verify each before moving on
+- Save progress frequently
+- Use checkpoints
+
+---
+
 ## Available Tools
 
 ### TaskTrackerTool
@@ -570,3 +614,47 @@ class RadcodeCoordinator:
                 workspace=workspace,
                 security_level=security_level
             )
+    
+    # ============= CONTEXT MANAGEMENT (Long Tasks) =============
+    
+    def get_events(self):
+        """Get conversation events for context analysis."""
+        if not self._conversation:
+            return []
+        try:
+            return self._conversation.events
+        except:
+            return []
+    
+    def get_context_summary(self) -> Dict[str, Any]:
+        """
+        Get summary of current context for long-task handling.
+        """
+        if not self._conversation:
+            return {"status": "not_initialized"}
+        
+        try:
+            events = self.get_events()
+            event_count = len(events) if events else 0
+            
+            # Estimate token usage
+            estimated_tokens = event_count * 200  # Rough estimate
+            
+            return {
+                "status": "available",
+                "event_count": event_count,
+                "estimated_tokens": estimated_tokens,
+                "needs_condensation": estimated_tokens > 50000,
+                "model": self._llm.model if self._llm else None
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+    
+    def can_continue(self) -> bool:
+        """
+        Check if agent can continue or needs context cleanup.
+        """
+        summary = self.get_context_summary()
+        if summary.get("needs_condensation"):
+            return False
+        return True
