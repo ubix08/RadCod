@@ -60,6 +60,22 @@ Browse websites, fill forms, extract content from web pages.
 ### SerperSearchTool (use when you need current web info or google search)
 Search the web for current information, news, documentation.
 
+### GitHub Integration
+You can interact with GitHub using:
+
+1. **gh CLI** (if installed):
+   - gh issue list - List issues
+   - gh pr list - List PRs
+   - gh pr create - Create PR
+   - gh pr review - Review PR
+   - gh run list - List workflow runs
+
+2. **GitHub API** (via curl):
+   - Set GITHUB_TOKEN env var
+   - Use API: https://api.github.com/repos/{owner}/{repo}/...
+   - Examples:
+     curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/owner/repo/issues
+
 ## Important
 
 - Be thorough - build complete applications
@@ -78,6 +94,65 @@ Search the web for current information, news, documentation.
 #   -d '{"q": "your query"}'
 
 # Set SERPER_API_KEY env var to enable web search via terminal
+
+
+# ============= GITHUB HELPER =============
+
+class GitHubHelper:
+    """
+    Optional GitHub helper using PyGithub.
+    
+    Usage:
+        pip install radcod[github]
+        
+        from src.coordinator import GitHubHelper
+        gh = GitHubHelper()
+        issues = gh.get_issues("owner/repo")
+    """
+    
+    @staticmethod
+    def check_available() -> bool:
+        """Check if PyGithub is available."""
+        try:
+            import github
+            return True
+        except ImportError:
+            return False
+    
+    def get_client(self, token: str = None):
+        """Get PyGithub client."""
+        try:
+            from github import Github
+            import os
+            token = token or os.getenv("GITHUB_TOKEN")
+            return Github(token)
+        except ImportError:
+            raise RuntimeError("PyGithub not installed: pip install PyGithub")
+    
+    def get_issues(self, repo: str, state: str = "open"):
+        """Get issues from repo (owner/repo)."""
+        client = self.get_client()
+        repo_obj = client.get_repo(repo)
+        return list(repo_obj.get_issues(state=state))
+    
+    def get_pulls(self, repo: str, state: str = "open"):
+        """Get PRs from repo."""
+        client = self.get_client()
+        repo_obj = client.get_repo(repo)
+        return list(repo_obj.get_pulls(state=state))
+    
+    def create_pr(
+        self, 
+        repo: str, 
+        title: str, 
+        body: str, 
+        head: str, 
+        base: str = "main"
+    ):
+        """Create a PR."""
+        client = self.get_client()
+        repo_obj = client.get_repo(repo)
+        return repo_obj.create_pull(title, body, head, base)
 
 
 # ============= COORDINATOR =============
