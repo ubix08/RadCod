@@ -208,12 +208,8 @@ class RadcodeCoordinator:
             return
         
         try:
-            from openhands.sdk import LLM, Agent, Conversation, Tool
-            from openhands.tools.preset import get_default_agent, get_default_tools
-            from openhands.tools.preset import get_default_condenser
-            from openhands.tools.glob import GlobTool
-            from openhands.tools.grep import GrepTool
-            from openhands.tools.task import TaskToolSet
+            from openhands.sdk import LLM, Agent, Conversation
+            from openhands.tools.preset import get_default_agent
             
             # LLM setup
             PROVIDERS = {
@@ -236,33 +232,16 @@ class RadcodeCoordinator:
             
             self._llm = LLM(model=model, api_key=api_key)
             
-            # Use SDK default agent (includes tools + security)
-            try:
-                self._agent = get_default_agent(self._llm)
-            except Exception:
-                # Fallback: manual config
-                from openhands.sdk.security import GraySwanAnalyzer
-                tools = get_default_tools(enable_browser=True)
-                tools.extend([
-                    Tool(name=TaskToolSet.name),
-                    Tool(name=GlobTool.name),
-                    Tool(name=GrepTool.name),
-                ])
-                self._agent = Agent(
-                    llm=self._llm,
-                    tools=tools,
-                    system_prompt=self._instructions,
-                    security_analyzer=GraySwanAnalyzer()
-                )
+            # Use SDK default agent (includes tools + condenser)
+            self._agent = get_default_agent(self._llm)
             
-            # Conversation with condenser
-            condenser_llm = self._llm.model_copy(update={"usage_id": "condenser"})
-            condenser = get_default_condenser(condenser_llm)
+            # Override system prompt with our custom instructions
+            self._agent._system_prompt = self._instructions
             
+            # Create conversation (agent has built-in condenser)
             self._conversation = Conversation(
                 agent=self._agent,
-                workspace=str(self._workspace),
-                condenser=condenser
+                workspace=str(self._workspace)
             )
             
             self._initialized = True
