@@ -2,69 +2,50 @@
 
 ## Core Architecture
 
-**ONE autonomous Agent** that handles all tasks using:
-- TaskTrackerTool for subtask management
-- TerminalTool for command execution  
-- FileEditorTool for code writing
-- SecurityAnalyzer for action validation
-
-## Features Implemented
-
-| Feature | Status | Description |
-|---------|--------|-------------|
-| Single Agent | ✅ | ONE Agent matching Devin |
-| TaskTrackerTool | ✅ | Explicit task visibility |
-| TerminalTool | ✅ | Command execution |
-| FileEditorTool | ✅ | Code writing |
-| SecurityAnalyzer | ✅ | Action validation (low/medium/high) |
-| Stuck Detection | ✅ | Timeout + max iterations |
-| Metrics | ✅ | Token usage + cost tracking |
-| Docker Sandbox | ✅ | Isolated execution |
-| Cloud Runtime | ✅ | OpenHands Cloud support |
-
-## Files
+**ONE autonomous Agent** that handles all tasks:
 
 ```
 src/
-├── cli.py                  # Simple CLI
-└── orchestrator/
-    └── coordinator.py     # Single Agent with all features
+├── cli.py           # CLI entry point
+└── coordinator.py  # Single Agent (the whole system!)
 ```
+
+## Features
+
+| Feature | Status |
+|---------|--------|
+| Single Agent | ✅ |
+| TaskTrackerTool | ✅ |
+| TerminalTool | ✅ |
+| FileEditorTool | ✅ |
+| SecurityAnalyzer | ✅ |
+| Stuck Detection | ✅ |
+| Metrics | ✅ |
+| Docker Sandbox | ✅ |
 
 ## Usage
 
 ```python
-from src.orchestrator.coordinator import RadcodeCoordinator
+from src.coordinator import RadcodeCoordinator
 
 # Basic
 coordinator = RadcodeCoordinator()
 result = coordinator.run("Build a CRM")
 
-# With security
+# With security level
 coordinator = RadcodeCoordinator(security_level="high")
 
 # With timeout
-result = coordinator.run_with_timeout(
-    "Build a CRM",
-    timeout_seconds=600,
-    max_iterations=100
-)
-
-# Get metrics
-metrics = coordinator.get_metrics()
+result = coordinator.run_with_timeout("Build a CRM", timeout_seconds=600)
 
 # Docker sandbox
-coordinator = RadcodeCoordinator.create_with_docker(
-    docker_image="openhands/runtime:latest"
-)
+coordinator = RadcodeCoordinator.create_with_docker()
 ```
 
-## Security Levels
+## CLI
 
-| Level | Dangerous Actions | Confirmation |
-|-------|------------------|--------------|
-| low | log only | no |
-| medium | warn | yes |
-| high | block | n/a |
+```bash
+python -m src.cli run "Build a CRM"
+```
 
 ## Devin Parity: ~90%

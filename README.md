@@ -1,26 +1,47 @@
-# Radcod
+# RadCode
 
-Autonomous AI Software Engineer Orchestrator.
-
-This system is designed to run 24/7, orchestrated by a main agent coordinator that delegates tasks to specialized agents (e.g., Coding Agent, Deep Search Agent, Browser Agent).
+Autonomous AI Software Engineer - Devin-like single agent architecture.
 
 ## Architecture
 
-Radcod utilizes the `openhands-sdk` to manage the Coding Agent component, ensuring a modular and maintainable design.
+**ONE autonomous Agent** that handles all tasks using OpenHands SDK.
 
-## Project Structure
-- `src/orchestrator/`: Main coordinator logic.
-- `src/agents/`: Specialized agent definitions (Deep Search, Browser).
-- `src/integrations/`: Integrations, including the `coding_agent` wrapper.
+```
+src/
+├── cli.py           # CLI entry point
+└── coordinator.py  # Single Agent (the whole system!)
+```
+
+## Features
+
+- Single Agent (Devin pattern)
+- TaskTrackerTool for subtask management
+- TerminalTool + FileEditorTool for execution
+- SecurityAnalyzer for action validation
+- Stuck detection with timeout
+- Metrics tracking (token/cost)
+- Docker sandbox support
 
 ## Quick Start
 
 ```python
-from src.integrations.coding_agent.wrapper import CodingAgentWrapper
+from src.coordinator import RadcodeCoordinator
 
-# Initialize the coding agent
-coder = CodingAgentWrapper(model_name="openai/gpt-4o", workspace_path="./workspace")
-
-# Delegate a task
-coder.run_task("Implement a new feature in the codebase")
+# Initialize and run
+coordinator = RadcodeCoordinator()
+result = coordinator.run("Build a CRM system")
 ```
+
+## CLI
+
+```bash
+python -m src.cli run "Build a CRM"
+```
+
+## Requirements
+
+- Python 3.10+
+- openhands-sdk
+- openhands-tools
+
+## Devin Parity: ~90%

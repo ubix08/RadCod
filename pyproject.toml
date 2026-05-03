@@ -1,13 +1,10 @@
 [project]
 name = "radcod"
 version = "0.1.0"
+description = "AI Software Engineer - Devin-like autonomous agent"
 dependencies = [
     "openhands-sdk",
     "openhands-tools",
-    "openai>=1.0",
-    "tavily",
-    "playwright",
-    "croniter",  # Cron expression parsing
 ]
 
 [project.optional-dependencies]
@@ -16,3 +13,6 @@ dev = [
     "black",
     "ruff",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
