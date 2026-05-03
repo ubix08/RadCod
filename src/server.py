@@ -18,6 +18,7 @@ from sse_starlette.sse import EventSourceResponse
 from src.coordinator import RadcodeCoordinator
 from src.deploy import DeploymentHelper
 from src.api import router as admin_router
+from src.orchestrator import RadCodeOrchestrator, OrchestratorConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("radcod.server")
@@ -328,6 +329,114 @@ async def deploy(req: DeployRequest):
         image=result.get("image"),
         error=result.get("error")
     )
+
+
+# ============= ORCHESTRATOR (Multi-Agent) =============
+
+@app.post("/orchestrator/run", response_model=RunResponse)
+async def run_orchestrated(
+    req: RunRequest,
+    background_tasks: BackgroundTasks,
+    parallel: bool = True
+):
+    """
+    Execute a complex task using multi-agent orchestration.
+    
+    This decomposes the task into subtasks and runs them in parallel
+    using spawned sub-agents.
+    
+    Use this for complex tasks like "Build a full-stack CRM".
+    Use /run for simple single-agent tasks.
+    """
+    import time
+    import uuid
+    
+    task_id = str(uuid.uuid4())[:8]
+    start_time = time.time()
+    
+    # Track orchestrator
+    _orchestrators[task_id] = {
+        "status": "pending",
+        "task": req.request,
+        "subtasks": [],
+    }
+    
+    def execute_with_orchestrator():
+        """Run task with orchestrator."""
+        try:
+            # Create config
+            config = OrchestratorConfig(
+                max_parallel_agents=min(4, req.timeout_seconds // 120),
+                default_workspace=req.workspace
+            )
+            
+            # Create orchestrator
+            orchestrator = RadCodeOrchestrator(
+                security_level=req.security_level,
+                config=config
+            )
+            
+            # Store reference
+            _orchestrators[task_id]["orchestrator"] = orchestrator
+            
+            # Run with progress
+            def on_progress(event: Dict):
+                for ws in _progress_connections:
+                    try:
+                        import asyncio
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            loop.call_soon_threadsafe(
+                                ws.send_json,
+                                {"task_id": task_id, **event}
+                            )
+                    except Exception:
+                        pass
+            
+            # Execute
+            result = orchestrator.run(req.request, parallel=parallel)
+            
+            # Store result
+            _orchestrators[task_id] = {
+                "status": result.get("status", "unknown"),
+                "task": req.request,
+                "subtasks": result.get("subtasks", []),
+                "result": result.get("result"),
+                "duration": time.time() - start_time
+            }
+            
+            logger.info(f"Orchestrated task {task_id} completed: {result.get('status')}")
+            
+        except Exception as e:
+            logger.error(f"Orchestrated task {task_id} failed: {e}")
+            _orchestrators[task_id] = {
+                "status": "error",
+                "error": str(e)
+            }
+    
+    # Schedule background execution
+    background_tasks.add_task(execute_with_orchestrator)
+    
+    return RunResponse(
+        status="started",
+        request=req.request,
+        iterations=0,
+        duration_seconds=0.0,
+        security_level=req.security_level
+    )
+
+
+@app.get("/orchestrator/{task_id}")
+async def get_orchestrator_status(task_id: str):
+    """Get status of an orchestrated task."""
+    if task_id not in _orchestrators:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    return _orchestrators[task_id]
+
+
+# Dict to track orchestrator tasks
+_orchestrators: Dict[str, Any] = {}
 
 
 # ============= WEBSOCKET =============
