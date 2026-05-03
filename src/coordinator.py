@@ -259,12 +259,11 @@ class RadcodeCoordinator:
                 logger.warning("BrowserToolSet not available")
             
             # ONE LLM instance
-            # Using Gemini 2.0 Flash (free tier)
-            # Set LLM_API_KEY or GEMINI_API_KEY env var
+            # Default model (uses LLM_MODEL env or SDK default)
+            # For Gemini, set LLM_MODEL=google/gemini-2.0-flash-exp and ensure GEMINI_API_KEY is set
             self._llm = LLM(
-                model=os.getenv("LLM_MODEL", "gemini/gemini-2.0-flash-001"),
-                api_key=self._key or os.getenv("GEMINI_API_KEY"),
-                base_url=os.getenv("LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
+                model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
+                api_key=self._key or os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")
             )
             
             # Security configuration
