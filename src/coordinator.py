@@ -135,6 +135,48 @@ If you're repeating the same action 3+ times without progress:
 
 # ============= MAIN COORDINATOR =============
 
+# Skills directory
+SKILLS_DIR = Path(__file__).parent / "skills"
+
+
+def _load_skills() -> str:
+    """Load skills from skills directory and return as system prompt addition."""
+    skill_content = []
+    
+    if not SKILLS_DIR.exists():
+        return ""
+    
+    for skill_file in SKILLS_DIR.glob("*/SKILL.md"):
+        try:
+            content = skill_file.read_text()
+            # Extract skill name from frontmatter
+            lines = content.split("\n")
+            skill_name = skill_file.parent.name
+            in_content = False
+            
+            # Skip frontmatter, get content
+            for line in lines:
+                if line == "---" and not in_content:
+                    in_content = True
+                    continue
+                if line == "---" and in_content:
+                    break
+                if in_content and line.strip():
+                    skill_content.append(line)
+                    
+            logger.info(f"Loaded skill: {skill_name}")
+        except Exception as e:
+            logger.warning(f"Failed to load skill {skill_file}: {e}")
+    
+    if skill_content:
+        return "\n\n## DOMAIN EXPERTISE\n\n" + "\n".join(skill_content)
+    return ""
+
+
+# Load skills at module import time
+SKILLS_PROMPT = _load_skills()
+
+
 class RadcodeCoordinator:
     """
     Devin-like Autonomous Agent.
@@ -151,7 +193,7 @@ class RadcodeCoordinator:
     ):
         self._key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self._workspace = Path(workspace)
-        self._instructions = SYSTEM_PROMPT
+        self._instructions = SYSTEM_PROMPT + SKILLS_PROMPT  # Include loaded skills
         self._security_level = security_level
         
         # SDK components
