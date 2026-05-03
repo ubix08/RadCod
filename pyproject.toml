@@ -3,4 +3,16 @@ name = "radcod"
 version = "0.1.0"
 dependencies = [
     "openhands-sdk",
+    "openhands-tools",
+    "openai>=1.0",
+    "tavily",
+    "playwright",
+    "croniter",  # Cron expression parsing
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff",
 ]
