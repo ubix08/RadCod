@@ -3,9 +3,8 @@ name = "radcod"
 version = "0.1.0"
 description = "AI Software Engineer - Devin-like autonomous agent"
 dependencies = [
-    "openhands-sdk",
-    "openhands-tools",
-    "openhands-runtime",
+    "openhands-sdk>=1.17.0",
+    "openhands-tools>=1.17.0",
     "fastapi>=0.100",
     "uvicorn[standard]>=0.20",
     "sse-starlette>=1.6",

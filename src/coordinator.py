@@ -255,10 +255,34 @@ class RadcodeCoordinator:
             
             # ONE LLM instance
             # Default model (uses LLM_MODEL env or SDK default)
-            # For Gemini, set LLM_MODEL=google/gemini-2.0-flash-exp and ensure GEMINI_API_KEY is set
+            # For free models:
+            #   - LLM_MODEL=groq/llama-3.1-70b-instruct + GROQ_API_KEY
+            #   - LLM_MODEL=gemini-2.0-flash-exp + GEMINI_API_KEY (Google AI)
+            raw_model = os.getenv("LLM_MODEL", "groq/llama-3.1-70b-instruct")
+            
+            # Add provider prefix if not present
+            if "/" in raw_model:
+                model = raw_model
+            else:
+                model = f"groq/{raw_model}" if "llama" in raw_model.lower() else raw_model
+            
+            # Get API key based on model name
+            if model.startswith("groq/"):
+                api_key = os.getenv("GROQ_API_KEY")
+            elif model.startswith("google/"):
+                api_key = os.getenv("GEMINI_API_KEY")
+            elif model.startswith("google-generative-ai"):
+                api_key = os.getenv("GEMINI_API_KEY")
+            elif "glm" in model.lower():
+                api_key = os.getenv("ZAI_API_KEY")
+            elif model.startswith("nvidia/"):
+                api_key = os.getenv("NVIDIA_API_KEY")
+            else:
+                api_key = os.getenv("GROQ_API_KEY") or os.getenv("GEMINI_API_KEY")
+            
             self._llm = LLM(
-                model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
-                api_key=self._key or os.getenv("GEMINI_API_KEY") or os.getenv("LLM_API_KEY")
+                model=model,
+                api_key=api_key
             )
             
             # Security configuration
@@ -287,7 +311,7 @@ class RadcodeCoordinator:
             )
             
             self._initialized = True
-            logger.info(f"RadcodeCoordinator initialized (browser: {has_browser})")
+            logger.info("RadcodeCoordinator initialized")
             
         except ImportError as e:
             logger.error(f"OpenHands SDK not installed: {e}")
@@ -296,46 +320,18 @@ class RadcodeCoordinator:
     def _build_security(self):
         """Build security analyzer based on security level."""
         try:
-            from openhands.sdk.security import SecurityAnalyzer, SecurityPolicy
+            from openhands.sdk.security import GraySwanAnalyzer, AlwaysConfirm
             
-            # Define allowed dangerous actions
-            dangerous_commands = [
-                "rm -rf /",           # Delete root
-                "rm -rf /*",          # Delete all
-                "dd if=",              # Disk wipe
-                "mkfs",                # Format
-                ":(){:|:&};:",         # Fork bomb
-                "curl | sh",           # Pipe to shell
-                "wget | sh",           # Download & execute
-            ]
-            
-            # Build security policy
+            # Define security based on level
             if self._security_level == "high":
-                # High security - block dangerous, confirm for moderate
-                policy = SecurityPolicy(
-                    block_dangerous=True,
-                    confirm_dangerous=False,
-                    allowed_commands=[],  # Empty = allow all except dangerous
-                    blocked_commands=dangerous_commands,
-                )
+                # High security - block dangerous actions
+                return AlwaysConfirm()
             elif self._security_level == "medium":
-                # Medium - warn for dangerous, confirm for moderate
-                policy = SecurityPolicy(
-                    block_dangerous=False,
-                    confirm_dangerous=True,
-                    allowed_commands=[],
-                    blocked_commands=dangerous_commands,
-                )
+                # Medium - gray swan analysis
+                return GraySwanAnalyzer()
             else:
-                # Low - just log warnings
-                policy = SecurityPolicy(
-                    block_dangerous=False,
-                    confirm_dangerous=False,
-                    allowed_commands=[],
-                    blocked_commands=[],
-                )
-            
-            return SecurityAnalyzer(policy=policy)
+                # Low security - use gray swan (minimal blocking)
+                return GraySwanAnalyzer()
             
         except ImportError:
             logger.warning("SecurityAnalyzer not available, running without security")
