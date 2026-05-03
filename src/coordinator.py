@@ -14,9 +14,69 @@ Usage:
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("radcod.coordinator")
+
+
+# ============= PROVIDER CONFIG =============
+
+# Model to provider mapping
+MODEL_PROVIDERS = {
+    # NVIDIA models
+    "nvidia": {
+        "models": ["llama", "mixtral", "nemotron", "minimax", "glm", "qwen"],
+        "env_key": "NVIDIA_API_KEY",
+        "base_url": "https://integrate.api.nvidia.com/v1"
+    },
+    # Anthropic
+    "anthropic": {
+        "models": ["claude", "sonnet", "haiku"],
+        "env_key": "ANTHROPIC_API_KEY",
+        "base_url": None
+    },
+    # OpenAI
+    "openai": {
+        "models": ["gpt-", "o1", "o3"],
+        "env_key": "OPENAI_API_KEY",
+        "base_url": None
+    },
+    # Google
+    "google": {
+        "models": ["gemini", "gemini-pro"],
+        "env_key": "GEMINI_API_KEY",
+        "base_url": None
+    },
+    # Groq
+    "groq": {
+        "models": ["llama", "mixtral", "gemma"],
+        "env_key": "GROQ_API_KEY",
+        "base_url": "https://api.groq.com/openai/v1"
+    },
+}
+
+
+def detect_provider(model: str) -> Dict[str, Any]:
+    """Auto-detect provider from model name."""
+    model_lower = model.lower()
+    
+    for provider, config in MODEL_PROVIDERS.items():
+        for model_prefix in config["models"]:
+            if model_prefix in model_lower:
+                return {
+                    "provider": provider,
+                    "env_key": config["env_key"],
+                    "base_url": config.get("base_url"),
+                    "model": model
+                }
+    
+    # Default to Groq (free tier)
+    return {
+        "provider": "groq",
+        "env_key": "GROQ_API_KEY",
+        "base_url": "https://api.groq.com/openai/v1",
+        "model": model
+    }
 
 
 class RadcodeCoordinator:
@@ -43,6 +103,10 @@ class RadcodeCoordinator:
         self._conversation = None
         self._initialized = False
         
+        # Metrics
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        
         logger.info(f"Coordinator created: workspace={workspace}")
     
     def _ensure_initialized(self):
@@ -51,50 +115,42 @@ class RadcodeCoordinator:
             return
         
         # Get model config
-        raw_model = os.getenv("LLM_MODEL", "meta/llama-3.1-70b-instruct")
-        api_base = os.getenv("NVIDIA_API_BASE")
+        raw_model = os.getenv("LLM_MODEL", "groq/llama-3.1-70b-instruct")
         
-        # Determine provider
-        is_nvidia = "nvidia" in raw_model.lower() or (api_base and "nvidia" in api_base)
+        # Detect provider
+        provider_config = detect_provider(raw_model)
+        api_key = os.environ.get(provider_config["env_key"])
+        
+        if not api_key:
+            raise ValueError(f"{provider_config['env_key']} not set. Please configure your API key.")
         
         try:
             from openhands.sdk import LLM
             from openhands.tools.preset.default import get_default_agent
             from openhands.sdk import Conversation
             
-            # Create LLM
-            if is_nvidia:
-                api_key = os.environ.get('NVIDIA_API_KEY')
-                if not api_key:
-                    raise ValueError("NVIDIA_API_KEY not set")
-                
-                model = raw_model
-                if not model.startswith("meta/") and "/" not in model and model.startswith("llama-"):
+            # Create LLM with provider config
+            model = provider_config["model"]
+            base_url = provider_config.get("base_url")
+            
+            # Handle NVIDIA specially
+            if provider_config["provider"] == "nvidia":
+                # Add meta prefix for bare llama models
+                if "llama" in model.lower() and "/" not in model:
                     model = f"meta/{model}"
-                
-                self._llm = LLM(
-                    model=model,
-                    api_key=api_key,
-                    api_base=api_base or "https://integrate.api.nvidia.com/v1"
-                )
-            else:
-                # Standard providers
-                model = raw_model.split("/")[-1] if "/" in raw_model else raw_model
-                
-                # Auto-detect provider from model name
-                provider_key = None
-                for prov in ["groq", "google", "anthropic", "openai"]:
-                    if prov in model.lower():
-                        env_vars = {
-                            "groq": "GROQ_API_KEY",
-                            "google": "GEMINI_API_KEY",
-                            "anthropic": "ANTHROPIC_API_KEY",
-                            "openai": "OPENAI_API_KEY"
-                        }
-                        provider_key = os.getenv(env_vars.get(prov, ""))
-                        break
-                
-                self._llm = LLM(model=model, api_key=provider_key)
+                if not base_url:
+                    base_url = "https://integrate.api.nvidia.com/v1"
+            
+            # Create LLM
+            llm_kwargs = {
+                "model": model,
+                "api_key": api_key
+            }
+            if base_url:
+                llm_kwargs["api_base"] = base_url
+            
+            self._llm = LLM(**llm_kwargs)
+            logger.info(f"LLM created: {model} via {provider_config['provider']}")
             
             # Get default agent (has all tools: terminal, file editor, browser, etc.)
             self._agent = get_default_agent(self._llm)
@@ -128,13 +184,31 @@ class RadcodeCoordinator:
         self._ensure_initialized()
         self._conversation.send_message(request)
         
-        result = self._conversation.run(**kwargs)
-        
-        return {
-            "status": "success",
-            "result": result,
-            "request": request
-        }
+        try:
+            result = self._conversation.run(**kwargs)
+            
+            # Try to get token usage if available
+            try:
+                if hasattr(self._llm, 'last_response'):
+                    resp = self._llm.last_response
+                    if hasattr(resp, 'usage'):
+                        self._prompt_tokens = resp.usage.prompt_tokens
+                        self._completion_tokens = resp.usage.completion_tokens
+            except:
+                pass
+            
+            return {
+                "status": "success",
+                "result": result,
+                "request": request
+            }
+        except Exception as e:
+            logger.error(f"Task failed: {e}")
+            return {
+                "status": "error",
+                "error": str(e),
+                "request": request
+            }
     
     def run_with_timeout(self, request: str, timeout_seconds: int = 600) -> Dict[str, Any]:
         """Run with timeout wrapper."""
@@ -170,15 +244,28 @@ class RadcodeCoordinator:
         """Check if can continue - SDK handles iteration."""
         return True  # SDK manages internally
     
+    @property
+    def model(self) -> str:
+        """Get current model."""
+        return getattr(self._llm, 'model', 'unknown') if self._llm else 'unknown'
+    
     def get_metrics(self) -> Dict[str, Any]:
         """Get metrics from SDK."""
         if not self._initialized:
             return {"status": "not_initialized"}
         
+        total_tokens = self._prompt_tokens + self._completion_tokens
+        # Estimate cost (approximate)
+        cost = (self._prompt_tokens / 1_000_000 * 0.5) + (self._completion_tokens / 1_000_000 * 1.5)
+        
         return {
             "status": "ok",
-            "model": getattr(self._llm, 'model', 'unknown'),
-            "workspace": str(self._workspace)
+            "model": self.model,
+            "workspace": str(self._workspace),
+            "prompt_tokens": self._prompt_tokens,
+            "completion_tokens": self._completion_tokens,
+            "total_tokens": total_tokens,
+            "estimated_cost_usd": round(cost, 6)
         }
     
     def get_context_summary(self) -> Dict[str, Any]:
@@ -188,7 +275,8 @@ class RadcodeCoordinator:
         
         return {
             "status": "ok",
-            "workspace": str(self._workspace)
+            "workspace": str(self._workspace),
+            "model": self.model
         }
     
     def condense_context(self) -> Dict[str, Any]:
