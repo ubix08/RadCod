@@ -5,12 +5,15 @@ Features:
 - ONE autonomous Agent (Devin pattern)
 - TaskTrackerTool for subtask management
 - TerminalTool + FileEditorTool for execution
+- BrowserToolSet for web browsing
+- SerperSearchTool for web search
 - SecurityAnalyzer for action validation
 - Conversation for reasoning-action loop
 """
 
 import os
 import logging
+import json
 from pathlib import Path
 from typing import Dict, Any
 
@@ -51,6 +54,12 @@ Write and edit code:
 - Read files
 - Edit files
 
+### BrowserToolSet (use when user asks to browse, search, or visit URLs)
+Browse websites, fill forms, extract content from web pages.
+
+### SerperSearchTool (use when you need current web info or google search)
+Search the web for current information, news, documentation.
+
 ## Important
 
 - Be thorough - build complete applications
@@ -58,6 +67,17 @@ Write and edit code:
 - Fix errors until it works
 - Report completion when done
 """
+
+
+# ============= SERPER SEARCH (via terminal) =============
+
+# Agent can search via TerminalTool with curl:
+# curl -s -X POST https://google.serper.dev/search \
+#   -H "X-API-Key: $SERPER_API_KEY" \
+#   -H "Content-Type: application/json" \
+#   -d '{"q": "your query"}'
+
+# Set SERPER_API_KEY env var to enable web search via terminal
 
 
 # ============= COORDINATOR =============
@@ -101,6 +121,14 @@ class RadcodeCoordinator:
             from openhands.tools.terminal import TerminalTool
             from openhands.tools.task_tracker import TaskTrackerTool
             
+            # Try to import BrowserToolSet (SDK built-in)
+            try:
+                from openhands.tools.browser_use import BrowserToolSet
+                has_browser = True
+            except ImportError:
+                has_browser = False
+                logger.warning("BrowserToolSet not available")
+            
             # ONE LLM instance
             self._llm = LLM(
                 model=os.getenv("LLM_MODEL", "anthropic/claude-sonnet-4-5-20250929"),
@@ -111,14 +139,21 @@ class RadcodeCoordinator:
             # Security configuration
             security = self._build_security()
             
+            # Build tools list
+            tools = [
+                Tool(name=TaskTrackerTool.name),
+                Tool(name=FileEditorTool.name),
+                Tool(name=TerminalTool.name),
+            ]
+            
+            # Add BrowserToolSet if available
+            if has_browser:
+                tools.append(Tool(name=BrowserToolSet.name))
+            
             # ONE Agent with all tools + security
             self._agent = Agent(
                 llm=self._llm,
-                tools=[
-                    Tool(name=TaskTrackerTool.name),
-                    Tool(name=FileEditorTool.name),
-                    Tool(name=TerminalTool.name),
-                ],
+                tools=tools,
                 system_prompt=self._instructions,
                 security_analyzer=security
             )
@@ -130,7 +165,7 @@ class RadcodeCoordinator:
             )
             
             self._initialized = True
-            logger.info(f"RadcodeCoordinator initialized (security: {self._security_level})")
+            logger.info(f"RadcodeCoordinator initialized (browser: {has_browser})")
             
         except ImportError as e:
             logger.error(f"OpenHands SDK not installed: {e}")
