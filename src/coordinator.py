@@ -1,8 +1,5 @@
 """
-RadCode - Thin SDK Wrapper.
-
-Just properly wraps OpenHands SDK - uses built-in functionality.
-No custom agent logic, step tracking, or prompts.
+RadCode - Agent using litellm directly (avoids SDK version conflicts).
 
 Usage:
     from src.coordinator import create_agent
@@ -14,78 +11,74 @@ Usage:
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger("radcod.coordinator")
 
 
 # ============= PROVIDER CONFIG =============
 
-# Model to provider mapping
-MODEL_PROVIDERS = {
-    # NVIDIA models
-    "nvidia": {
-        "models": ["llama", "mixtral", "nemotron", "minimax", "glm", "qwen"],
-        "env_key": "NVIDIA_API_KEY",
-        "base_url": "https://integrate.api.nvidia.com/v1"
-    },
-    # Anthropic
-    "anthropic": {
-        "models": ["claude", "sonnet", "haiku"],
-        "env_key": "ANTHROPIC_API_KEY",
-        "base_url": None
-    },
-    # OpenAI
-    "openai": {
-        "models": ["gpt-", "o1", "o3"],
-        "env_key": "OPENAI_API_KEY",
-        "base_url": None
-    },
-    # Google
-    "google": {
-        "models": ["gemini", "gemini-pro"],
-        "env_key": "GEMINI_API_KEY",
-        "base_url": None
-    },
-    # Groq
-    "groq": {
-        "models": ["llama", "mixtral", "gemma"],
-        "env_key": "GROQ_API_KEY",
-        "base_url": "https://api.groq.com/openai/v1"
-    },
-}
-
-
 def detect_provider(model: str) -> Dict[str, Any]:
     """Auto-detect provider from model name."""
     model_lower = model.lower()
     
-    for provider, config in MODEL_PROVIDERS.items():
-        for model_prefix in config["models"]:
-            if model_prefix in model_lower:
-                return {
-                    "provider": provider,
-                    "env_key": config["env_key"],
-                    "base_url": config.get("base_url"),
-                    "model": model
-                }
+    # Model to provider mapping
+    mappings = {
+        # OpenRouter
+        ("openrouter",): {
+            "provider": "openrouter",
+            "env_key": "OPENROUTER_API_KEY",
+            "base_url": "https://openrouter.ai/api/v1"
+        },
+        # Groq (deprecated models)
+        ("groq",): {
+            "provider": "groq",
+            "env_key": "GROQ_API_KEY",
+            "base_url": "https://api.groq.com/openai/v1"
+        },
+        # NVIDIA
+        ("nvidia", "minimax", "meta", "nemotron"): {
+            "provider": "nvidia",
+            "env_key": "NVIDIA_API_KEY",
+            "base_url": "https://integrate.api.nvidia.com/v1"
+        },
+        # Google
+        ("gemini",): {
+            "provider": "google",
+            "env_key": "GEMINI_API_KEY",
+            "base_url": "https://generativelanguage.googleapis.com/v1"
+        },
+        # Anthropic
+        ("claude", "sonnet", "haiku"): {
+            "provider": "anthropic",
+            "env_key": "ANTHROPIC_API_KEY",
+            "base_url": None
+        },
+        # OpenAI
+        ("gpt", "o1", "o3"): {
+            "provider": "openai",
+            "env_key": "OPENAI_API_KEY",
+            "base_url": None
+        },
+    }
     
-    # Default to Groq (free tier)
+    # Check each prefix
+    for prefixes, config in mappings.items():
+        for prefix in prefixes:
+            if prefix in model_lower:
+                return {**config, "model": model}
+    
+    # Default to OpenRouter
     return {
-        "provider": "groq",
-        "env_key": "GROQ_API_KEY",
-        "base_url": "https://api.groq.com/openai/v1",
+        "provider": "openrouter",
+        "env_key": "OPENROUTER_API_KEY",
+        "base_url": "https://openrouter.ai/api/v1",
         "model": model
     }
 
 
 class RadcodeCoordinator:
-    """
-    Thin wrapper around OpenHands SDK.
-    
-    Simply configures and exposes SDK components.
-    All agent logic is handled by the SDK.
-    """
+    """Agent using litellm directly."""
     
     def __init__(
         self, 
@@ -93,115 +86,58 @@ class RadcodeCoordinator:
         workspace: str = "./workspace",
         security_level: str = "medium",
     ):
-        self._key = api_key or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
         self._workspace = Path(workspace)
         self._security_level = security_level
-        
-        # SDK components - initialized on first use
-        self._llm = None
-        self._agent = None
-        self._conversation = None
-        self._initialized = False
         
         # Metrics
         self._prompt_tokens = 0
         self._completion_tokens = 0
         
+        self._workspace.mkdir(parents=True, exist_ok=True)
         logger.info(f"Coordinator created: workspace={workspace}")
     
-    def _ensure_initialized(self):
-        """Initialize SDK components on first use."""
-        if self._initialized:
-            return
-        
-        # Get model config
-        raw_model = os.getenv("LLM_MODEL", "groq/llama-3.1-70b-instruct")
+    def run(self, request: str, max_tokens: int = 2000, **kwargs) -> Dict[str, Any]:
+        """Execute task using litellm."""
+        # Get model
+        model = os.getenv("LLM_MODEL", "openrouter/meta-llama/llama-3.1-70b-instruct")
         
         # Detect provider
-        provider_config = detect_provider(raw_model)
+        provider_config = detect_provider(model)
         api_key = os.environ.get(provider_config["env_key"])
         
         if not api_key:
-            raise ValueError(f"{provider_config['env_key']} not set. Please configure your API key.")
+            return {
+                "status": "error",
+                "error": f"{provider_config['env_key']} not set. Please configure your API key."
+            }
         
         try:
-            from openhands.sdk import LLM
-            from openhands.tools.preset.default import get_default_agent
-            from openhands.sdk import Conversation
+            from litellm import completion
             
-            # Create LLM with provider config
-            model = provider_config["model"]
-            base_url = provider_config.get("base_url")
-            
-            # Handle NVIDIA specially
-            if provider_config["provider"] == "nvidia":
-                # Add meta prefix for bare llama models
-                if "llama" in model.lower() and "/" not in model:
-                    model = f"meta/{model}"
-                if not base_url:
-                    base_url = "https://integrate.api.nvidia.com/v1"
-            
-            # Create LLM
+            # Build kwargs
             llm_kwargs = {
                 "model": model,
-                "api_key": api_key
+                "messages": [{"role": "user", "content": request}],
+                "max_tokens": max_tokens,
             }
-            if base_url:
-                llm_kwargs["api_base"] = base_url
             
-            self._llm = LLM(**llm_kwargs)
-            logger.info(f"LLM created: {model} via {provider_config['provider']}")
+            # Add custom headers for OpenRouter
+            if provider_config["provider"] == "openrouter":
+                llm_kwargs["extra_headers"] = {
+                    "HTTP-Referer": "https://radcod.dev",
+                    "X-Title": "RadCode"
+                }
             
-            # Get default agent (has all tools: terminal, file editor, browser, etc.)
-            self._agent = get_default_agent(self._llm)
+            response = completion(**llm_kwargs)
             
-            # Create conversation
-            self._workspace.mkdir(parents=True, exist_ok=True)
-            self._conversation = Conversation(
-                agent=self._agent,
-                workspace=str(self._workspace)
-            )
-            
-            self._initialized = True
-            logger.info("SDK initialized successfully")
-            
-        except ImportError as e:
-            logger.error(f"SDK not installed: {e}")
-            raise RuntimeError("pip install openhands-sdk openhands-tools")
-    
-    @property
-    def conversation(self):
-        """Access SDK conversation."""
-        self._ensure_initialized()
-        return self._conversation
-    
-    def run(self, request: str, **kwargs) -> Dict[str, Any]:
-        """
-        Execute task.
-        
-        Simply passes to SDK - all logic handled internally.
-        """
-        self._ensure_initialized()
-        self._conversation.send_message(request)
-        
-        try:
-            result = self._conversation.run(**kwargs)
-            
-            # Try to get token usage if available
-            try:
-                if hasattr(self._llm, 'last_response'):
-                    resp = self._llm.last_response
-                    if hasattr(resp, 'usage'):
-                        self._prompt_tokens = resp.usage.prompt_tokens
-                        self._completion_tokens = resp.usage.completion_tokens
-            except:
-                pass
+            result_text = response.choices[0].message.content
             
             return {
                 "status": "success",
-                "result": result,
+                "result": result_text,
                 "request": request
             }
+            
         except Exception as e:
             logger.error(f"Task failed: {e}")
             return {
@@ -240,48 +176,14 @@ class RadcodeCoordinator:
         
         return result_container.get('result', {"status": "unknown"})
     
-    def can_continue(self) -> bool:
-        """Check if can continue - SDK handles iteration."""
-        return True  # SDK manages internally
-    
-    @property
-    def model(self) -> str:
-        """Get current model."""
-        return getattr(self._llm, 'model', 'unknown') if self._llm else 'unknown'
-    
     def get_metrics(self) -> Dict[str, Any]:
-        """Get metrics from SDK."""
-        if not self._initialized:
-            return {"status": "not_initialized"}
-        
-        total_tokens = self._prompt_tokens + self._completion_tokens
-        # Estimate cost (approximate)
-        cost = (self._prompt_tokens / 1_000_000 * 0.5) + (self._completion_tokens / 1_000_000 * 1.5)
-        
+        """Get metrics."""
+        model = os.getenv("LLM_MODEL", "unknown")
         return {
             "status": "ok",
-            "model": self.model,
-            "workspace": str(self._workspace),
-            "prompt_tokens": self._prompt_tokens,
-            "completion_tokens": self._completion_tokens,
-            "total_tokens": total_tokens,
-            "estimated_cost_usd": round(cost, 6)
+            "model": model,
+            "workspace": str(self._workspace)
         }
-    
-    def get_context_summary(self) -> Dict[str, Any]:
-        """Get context from SDK."""
-        if not self._initialized:
-            return {"status": "not_initialized"}
-        
-        return {
-            "status": "ok",
-            "workspace": str(self._workspace),
-            "model": self.model
-        }
-    
-    def condense_context(self) -> Dict[str, Any]:
-        """Condense via SDK (if supported)."""
-        return {"status": "ok"}
 
 
 def create_agent(
@@ -289,7 +191,7 @@ def create_agent(
     workspace: str = "./workspace",
     security_level: str = "medium"
 ) -> RadcodeCoordinator:
-    """Create SDK-wrapped agent."""
+    """Create agent."""
     return RadcodeCoordinator(
         api_key=api_key,
         workspace=workspace,
@@ -302,6 +204,10 @@ def main():
     import sys
     
     if len(sys.argv) < 2:
+        print("Usage: python -m src.coordinator run <task>")
+        sys.exit(1)
+    
+    if sys.argv[1] != "run":
         print("Usage: python -m src.coordinator run <task>")
         sys.exit(1)
     
